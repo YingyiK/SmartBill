@@ -1,0 +1,13 @@
+.step-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 48px;
+}
+
+.step-line {
+  flex: 1;
+  height: 2px;
+  background-color: #E5E7EB;
+  margin: 0 16px 32px 16px;
+}

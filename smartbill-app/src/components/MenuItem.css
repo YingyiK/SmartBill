@@ -1,0 +1,25 @@
+.menu-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  color: #374151;
+  background: none;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  font-size: 14px;
+  text-align: left;
+}
+
+.menu-item:hover {
+  background-color: #F3F4F6;
+}
+
+.menu-item-active {
+  color: #3B82F6;
+  background-color: #EFF6FF;
+  font-weight: 500;
+}

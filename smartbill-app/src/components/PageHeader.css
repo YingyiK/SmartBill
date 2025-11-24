@@ -1,0 +1,16 @@
+.page-header {
+  margin-bottom: 32px;
+}
+
+.page-title {
+  font-size: 30px;
+  font-weight: bold;
+  color: #111827;
+  margin: 0 0 8px 0;
+}
+
+.page-subtitle {
+  color: #6B7280;
+  margin: 0;
+  font-size: 16px;
+}

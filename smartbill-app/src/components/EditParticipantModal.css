@@ -1,0 +1,187 @@
+/* 编辑模态框背景遮罩 */
+.edit-modal-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: editFadeIn 0.2s ease-in;
+}
+
+@keyframes editFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 编辑模态框容器 */
+.edit-modal-container {
+  background-color: white;
+  border-radius: 16px;
+  width: 90%;
+  max-width: 480px;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  animation: editSlideUp 0.3s ease-out;
+}
+
+@keyframes editSlideUp {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* 编辑模态框头部 */
+.edit-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 24px 24px 16px 24px;
+  border-bottom: 1px solid #F3F4F6;
+}
+
+.edit-modal-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: #111827;
+  margin: 0;
+}
+
+.edit-modal-close-button {
+  background: none;
+  border: none;
+  color: #6B7280;
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.edit-modal-close-button:hover {
+  background-color: #F3F4F6;
+  color: #111827;
+}
+
+/* 编辑表单 */
+.edit-modal-form {
+  padding: 24px;
+}
+
+.edit-form-group {
+  margin-bottom: 20px;
+}
+
+.edit-form-label {
+  display: block;
+  font-size: 14px;
+  font-weight: 500;
+  color: #374151;
+  margin-bottom: 8px;
+}
+
+.edit-form-input {
+  width: 100%;
+  padding: 12px 16px;
+  border: 1px solid #D1D5DB;
+  border-radius: 8px;
+  font-size: 14px;
+  color: #111827;
+  transition: all 0.2s;
+  outline: none;
+}
+
+.edit-form-input:focus {
+  border-color: #3B82F6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.edit-form-input::placeholder {
+  color: #9CA3AF;
+}
+
+.edit-form-input-error {
+  border-color: #EF4444;
+}
+
+.edit-form-input-error:focus {
+  border-color: #EF4444;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.1);
+}
+
+.edit-form-error {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  color: #EF4444;
+}
+
+/* 编辑按钮组 */
+.edit-modal-footer {
+  display: flex;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.edit-modal-button {
+  flex: 1;
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: none;
+  outline: none;
+}
+
+.edit-modal-button-cancel {
+  background-color: white;
+  color: #374151;
+  border: 1px solid #D1D5DB;
+}
+
+.edit-modal-button-cancel:hover {
+  background-color: #F9FAFB;
+  border-color: #9CA3AF;
+}
+
+.edit-modal-button-submit {
+  background-color: #3B82F6;
+  color: white;
+}
+
+.edit-modal-button-submit:hover {
+  background-color: #2563EB;
+}
+
+.edit-modal-button-submit:active {
+  transform: scale(0.98);
+}
+
+/* 响应式 */
+@media (max-width: 640px) {
+  .edit-modal-container {
+    width: 95%;
+    margin: 16px;
+  }
+
+  .edit-modal-header,
+  .edit-modal-form {
+    padding: 16px;
+  }
+}
