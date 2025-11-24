@@ -24,7 +24,7 @@ SmartBill/
 
 **Backend:**
 - Python (FastAPI)
-- PaddleOCR
+- Google Gemini 2.5 Flash-Lite (OCR)
 - OpenAI/Claude API
 - Whisper STT
 
@@ -38,13 +38,24 @@ SmartBill/
 ## Getting Started
 
 ### Backend Setup
+
+#### OCR Service
 ```bash
 cd backend/ocr_service
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
-uvicorn ocr_service.main:app --reload --port 8000
+
+# Set up environment variables
+# Create .env file with: GEMINI_API_KEY=your_api_key_here
+
+# Start the server
+python -m uvicorn main:app --reload --port 8000
 ```
 
 Visit API docs: http://localhost:8000/docs
+
+**Note**: OCR service requires a Google Gemini API key. Get one from [Google AI Studio](https://makersuite.google.com/app/apikey).
 
 ### Frontend Setup
 ```bash
@@ -57,6 +68,7 @@ npm run dev
 
 - [Software Requirement Specification](docs/SRS.md)
 - [API Documentation](docs/API.md)
+- [OCR Service Documentation](backend/ocr_service/README.md)
 
 ## License
 
