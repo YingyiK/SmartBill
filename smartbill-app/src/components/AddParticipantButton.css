@@ -1,0 +1,22 @@
+.add-participant-button {
+  background-color: #3B82F6;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 12px 24px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: background-color 0.3s;
+}
+
+.add-participant-button:hover {
+  background-color: #2563EB;
+}
+
+.add-participant-button:active {
+  transform: scale(0.98);
+}
