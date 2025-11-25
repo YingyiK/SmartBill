@@ -1,5 +1,78 @@
 .content-wrapper {
-  max-width: 1280px;
+  max-width: 1400px;
   margin: 0 auto;
-  padding: 32px;
+  padding: 48px 64px;
+}
+
+/* 页面标题样式放大 */
+.content-wrapper h1 {
+  font-size: 40px;
+  font-weight: 700;
+  margin-bottom: 12px;
+  color: #111827;
+}
+
+.content-wrapper p {
+  font-size: 18px;
+  color: #6B7280;
+  margin-bottom: 40px;
+}
+
+/* 步骤指示器容器 */
+.step-indicator-container {
+  margin: 48px 0;
+}
+
+/* 上传区域放大 */
+.upload-area {
+  margin-top: 48px;
+  padding: 80px 60px;
+  border: 3px dashed #D1D5DB;
+  border-radius: 16px;
+  text-align: center;
+  background: white;
+  transition: all 0.3s;
+}
+
+.upload-area:hover {
+  border-color: #3B82F6;
+  background: #F9FAFB;
+}
+
+.upload-icon {
+  margin-bottom: 32px;
+}
+
+.upload-title {
+  font-size: 26px;
+  font-weight: 600;
+  color: #111827;
+  margin-bottom: 12px;
+}
+
+.upload-description {
+  font-size: 17px;
+  color: #6B7280;
+  margin-bottom: 32px;
+}
+
+.upload-button {
+  padding: 16px 32px;
+  font-size: 17px;
+  font-weight: 600;
+  background: #3B82F6;
+  color: white;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.upload-button:hover {
+  background: #2563EB;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
 }
