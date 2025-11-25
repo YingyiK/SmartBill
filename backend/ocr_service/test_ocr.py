@@ -41,7 +41,7 @@ TOTAL 33.40
 VISA TEND 33.40
 CHANGE DUE 0.00"""
     
-    response = requests.post(url, params={"text": test_text})
+    response = requests.post(url, json={"text": test_text})
     
     if response.status_code == 200:
         result = response.json()

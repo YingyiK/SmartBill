@@ -2,7 +2,7 @@
 Main FastAPI application for OCR service
 Handles receipt image upload and text extraction
 """
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException, Query, Body, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import logging
@@ -10,7 +10,7 @@ import os
 from typing import Optional
 from dotenv import load_dotenv
 
-from models import OCRResponse, ErrorResponse
+from models import OCRResponse, ErrorResponse, TestRequest
 from gemini_ocr_engine import GeminiOCREngine as OCREngine
 from parser import ReceiptParser
 
@@ -151,24 +151,43 @@ async def upload_receipt(image: UploadFile = File(...)):
         )
 
 @app.post("/api/ocr/test", response_model=OCRResponse)
-async def test_parser(text: str):
+async def test_parser(
+    request: Optional[TestRequest] = Body(None),
+    text: Optional[str] = Query(None)
+):
     """
     Test endpoint: Parse text directly without OCR
     
+    Supports both JSON body and query parameter:
+    - JSON body: {"text": "receipt text..."}
+    - Query parameter: ?text=receipt text...
+    
     Args:
-        text: Raw receipt text
+        request: TestRequest with "text" field (JSON body, optional)
+        text: Raw receipt text as query parameter (optional)
         
     Returns:
         OCRResponse with parsed data
     """
     try:
-        items, total, store_name = ReceiptParser.parse(text)
-        subtotal = ReceiptParser._extract_subtotal(text)
-        tax_amount = ReceiptParser._extract_tax(text)
+        # Get text from either JSON body or query parameter
+        if request and request.text:
+            receipt_text = request.text
+        elif text:
+            receipt_text = text
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Missing 'text' field. Provide either JSON body with 'text' field or 'text' query parameter."
+            )
+        
+        items, total, store_name = ReceiptParser.parse(receipt_text)
+        subtotal = ReceiptParser._extract_subtotal(receipt_text)
+        tax_amount = ReceiptParser._extract_tax(receipt_text)
         
         return OCRResponse(
             success=True,
-            raw_text=text,
+            raw_text=receipt_text,
             items=items,
             total=total,
             subtotal=subtotal,
@@ -176,6 +195,8 @@ async def test_parser(text: str):
             store_name=store_name,
             tax_rate=ReceiptParser.TAX_RATE
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=500,

@@ -58,3 +58,9 @@ class ErrorResponse(BaseModel):
     """
     success: bool = False
     error: str = Field(..., description="Error message")
+
+class TestRequest(BaseModel):
+    """
+    Request model for test endpoint
+    """
+    text: str = Field(..., description="Raw receipt text to parse")

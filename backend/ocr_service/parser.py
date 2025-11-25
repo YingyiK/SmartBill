@@ -29,6 +29,7 @@ class ReceiptParser:
         r'\bTOTAL\s*:?\s*\$?\s*(\d+\.\d{2})',  # Match "TOTAL" as whole word
         r'\bTOTAL\s+(\d+\.\d{2})',  # Match "TOTAL" followed by space and number
         r'\bAMOUNT\s*DUE\s*:?\s*\$?\s*(\d+\.\d{2})',
+        r'\bBALANCE\s*DUE\s+(\d+\.\d{2})',  # "BALANCE DUE 23.31" (Sprouts format)
         r'\bBALANCE\s*:?\s*\$?\s*(\d+\.\d{2})'
     ]
     
@@ -41,6 +42,7 @@ class ReceiptParser:
     
     # Tax patterns - match various tax formats
     TAX_PATTERNS = [
+        r'SALES\s*TAX\s+\d+\.\d{2}\s+(\d+\.\d{2})',  # "Sales Tax 10.13 0.95" (Sprouts format)
         r'TAX1\s+\d+\.?\d*\s*%\s+(\d+\.\d{2})',  # "TAX1 9.3750 % 0.65"
         r'TAX[\s:]*\$?\s*(\d+\.\d{2})',  # "TAX 0.65" or "TAX: 0.65"
         r'SALES\s*TAX[\s:]*\$?\s*(\d+\.\d{2})',  # "SALES TAX 0.65"
@@ -107,17 +109,80 @@ class ReceiptParser:
         # Handle escaped newlines (\\n -> \n)
         text = text.replace('\\n', '\n')
         
+        # Find the start of items section (after "GROCERY" or similar category headers)
+        # and end before "Tax Report" or similar sections
+        text_upper = text.upper()
+        start_idx = 0
+        end_idx = len(text.split('\n'))
+        
+        # Find start: look for "GROCERY" or category headers (only for Sprouts format)
+        grocery_match = re.search(r'GROCERY', text_upper)
+        if grocery_match:
+            # Find the line number where GROCERY appears
+            lines_before = text[:grocery_match.end()].count('\n')
+            start_idx = lines_before + 1  # Start after the GROCERY line
+        
+        # Find end: look for "Tax Report" (Sprouts) or "SUBTOTAL"/"TOTAL" (other stores)
+        # Be more specific to avoid matching "TAX1" or "TAX" in the middle
+        tax_report_match = re.search(r'TAX\s+REPORT', text_upper)
+        if tax_report_match:
+            # Find the line number where Tax Report appears
+            lines_before = text[:tax_report_match.start()].count('\n')
+            end_idx = lines_before  # Stop before Tax Report
+        else:
+            # For other stores, stop before SUBTOTAL or TOTAL line
+            # Look for lines that start with SUBTOTAL or TOTAL (not in the middle of text)
+            subtotal_match = re.search(r'^\s*SUBTOTAL', text_upper, re.MULTILINE)
+            if subtotal_match:
+                lines_before = text[:subtotal_match.start()].count('\n')
+                end_idx = lines_before  # Stop before SUBTOTAL
+        
         items = []
         lines = text.split('\n')
+        # Only process lines between start_idx and end_idx
+        lines = lines[start_idx:end_idx]
+        
+        # Debug: log the parsing range
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug(f"Parsing range: start_idx={start_idx}, end_idx={end_idx}, total_lines={len(text.split('\n'))}")
+        logger.debug(f"Lines to parse ({len(lines)}): {lines[:5]}...")
+        
         i = 0
         skip_until_void_end = False
         tax_rate_multiplier = None  # Will be extracted from receipt
         
         # First, extract tax rate from receipt if available
+        # Try different tax rate formats
         tax_rate_match = re.search(r'TAX1\s+(\d+\.?\d*)\s*%', text.upper())
-        if tax_rate_match:
-            tax_rate_percent = float(tax_rate_match.group(1))
-            tax_rate_multiplier = 1 + (tax_rate_percent / 100)
+        if not tax_rate_match:
+            # Try Sprouts format: "Sales Tax 10.13 0.95"
+            # 10.13 = taxable amount, 0.95 = tax amount
+            # Tax rate = 0.95 / 10.13
+            sales_tax_match = re.search(r'SALES\s*TAX\s+(\d+\.\d{2})\s+(\d+\.\d{2})', text.upper())
+            if sales_tax_match:
+                try:
+                    taxable_amount = float(sales_tax_match.group(1))
+                    tax_amount = float(sales_tax_match.group(2))
+                    if taxable_amount > 0:
+                        # Calculate tax rate: tax_amount / taxable_amount
+                        tax_rate = tax_amount / taxable_amount
+                        tax_rate_multiplier = 1 + tax_rate
+                    else:
+                        tax_rate_multiplier = None
+                except (ValueError, IndexError, ZeroDivisionError):
+                    tax_rate_multiplier = None
+        
+        if tax_rate_match and not tax_rate_multiplier:
+            try:
+                tax_rate_percent = float(tax_rate_match.group(1))
+                # If it's a percentage (like 9.375), use it as percentage
+                if tax_rate_percent < 1:
+                    tax_rate_multiplier = 1 + tax_rate_percent
+                else:
+                    tax_rate_multiplier = 1 + (tax_rate_percent / 100)
+            except (ValueError, IndexError):
+                tax_rate_multiplier = None
         
         while i < len(lines):
             line = lines[i].strip()
@@ -158,24 +223,89 @@ class ReceiptParser:
                 i += 1
                 continue
             
+            # Skip category headers (e.g., "GROCERY", "VITAMINS") - lines without prices
+            line_upper = line.upper().strip()
+            if line_upper in ['GROCERY', 'VITAMINS', 'PRODUCE', 'MEAT', 'DAIRY', 'BAKERY']:
+                i += 1
+                continue
+            
+            # Skip discount/promotion lines (e.g., "1 @ 2 FOR 4.00" or "1 @ 4 FOR 9.00")
+            if re.match(r'^\d+\s*@\s*\d+\s+FOR\s+\d+\.\d{2}', line):
+                i += 1
+                continue
+            
+            # Check if this is a CRV line (e.g., "*CRV FS/TX 05 0.05 T")
+            crv_match = re.search(r'\*CRV.*?(\d+\.\d{2})\s*([TXN]?)', line.upper())
+            if crv_match:
+                # This is a CRV fee line, attach to the previous item
+                if items:
+                    crv_amount = float(crv_match.group(1))
+                    crv_tax_indicator = crv_match.group(2) if crv_match.group(2) else None
+                    
+                    # Get the last item's base price (should not have tax applied yet)
+                    item_base_price = items[-1].price
+                    
+                    # Check if the item line had T/X indicator
+                    item_tax_indicator = None
+                    if i > 0:
+                        prev_line = lines[i - 1].strip().upper()
+                        item_tax_match = re.search(r'\s+([XNT])\s*$', prev_line)
+                        if item_tax_match:
+                            item_tax_indicator = item_tax_match.group(1)
+                    
+                    # Calculate item price with tax (if needed)
+                    item_price_with_tax = item_base_price
+                    if item_tax_indicator in ['T', 'X'] and tax_rate_multiplier:
+                        item_price_with_tax = item_base_price * tax_rate_multiplier
+                    
+                    # Calculate CRV with tax (if needed)
+                    crv_with_tax = crv_amount
+                    if crv_tax_indicator in ['T', 'X'] and tax_rate_multiplier:
+                        crv_with_tax = crv_amount * tax_rate_multiplier
+                    
+                    # Total = item (with tax if needed) + CRV (with tax if needed)
+                    total_price = item_price_with_tax + crv_with_tax
+                    
+                    items[-1].price = round(total_price, 2)
+                i += 1
+                continue
+            
+            # Check if this is a quantity line (e.g., "2 @ 3.99")
+            quantity_price_match = re.match(r'^(\d+)\s*@\s*(\d+\.\d{2})\s*$', line)
+            if quantity_price_match:
+                # This is a quantity/price line, update the previous item
+                if items:
+                    quantity = int(quantity_price_match.group(1))
+                    unit_price = float(quantity_price_match.group(2))
+                    items[-1].quantity = quantity
+                    items[-1].price = round(unit_price * quantity, 2)
+                i += 1
+                continue
+            
             # Try to find price in current line
             price_match = re.search(cls.PRICE_PATTERN, line)
             tax_indicator = None
             
-            # Check for tax indicator (X or N) at the end of line
-            tax_indicator_match = re.search(r'\s+([XN])\s*$', line)
+            # Check for tax indicator (X, N, or T) at the end of line
+            tax_indicator_match = re.search(r'\s+([XNT])\s*$', line)
             if tax_indicator_match:
                 tax_indicator = tax_indicator_match.group(1)
             
-            # Pattern 1: Price and item name in same line (e.g., "ROTH CREAMY ... 3.97 N")
+            # Pattern 1: Price and item name in same line (e.g., "CHOC PB PROTEIN 2.00" or "ROTH CREAMY ... 3.97 N")
+            # Only process lines that have a price (this ensures we skip category headers)
             if price_match:
                 price = float(price_match.group(1))
                 
                 # Extract item name (text before the price)
                 name = line[:price_match.start()].strip()
                 
+                # Skip if this is just a category header or metadata (no meaningful name before price)
+                if not name or len(name) < 2:
+                    i += 1
+                    continue
+                
                 # Remove tax indicator from name if present
-                name = re.sub(r'\s+[XN]\s*$', '', name).strip()
+                name = re.sub(r'\s+[XNT]\s*$', '', name).strip()
                 
                 # Remove product codes and other metadata (12+ digit numbers, single letters like "F")
                 name = re.sub(r'\d{12,}', '', name)  # Remove product codes
@@ -184,22 +314,44 @@ class ReceiptParser:
                 # Clean up item name
                 name = cls._clean_item_name(name)
                 
-                # Apply tax multiplier if X indicator found
-                if tax_indicator == 'X' and tax_rate_multiplier:
-                    price = price * tax_rate_multiplier
-                    price = round(price, 2)
+                # Skip if name is empty or too short after cleaning
+                if not name or len(name) < 2:
+                    i += 1
+                    continue
                 
-                if name and len(name) > 2 and not cls._is_payment_line(name) and cls._looks_like_item_name(name):
+                # Don't apply tax yet - wait for CRV if it exists
+                # Store the tax indicator for later use
+                # We'll apply tax after CRV is added (if any)
+                
+                if name and len(name) > 2 and not cls._is_payment_line(name):
+                    # Removed _looks_like_item_name check as it might be too strict
                     # Check for quantity
                     quantity = cls._extract_quantity(name)
                     if quantity > 1:
                         name = re.sub(r'^\d+\s*[xX×]\s*', '', name).strip()
                     
+                    # Store item with base price (no tax yet)
+                    # We'll apply tax when we process CRV or at the end
                     items.append(Item(
                         name=name,
-                        price=price,
+                        price=price,  # Base price, tax will be applied later if needed
                         quantity=quantity
                     ))
+                    
+                    # Store tax indicator in a way we can access it later
+                    # For now, we'll check the next line for CRV
+                    # If no CRV follows, apply tax now
+                    # Check if next line is CRV
+                    if i + 1 < len(lines):
+                        next_line_check = lines[i + 1].strip().upper()
+                        if '*CRV' not in next_line_check:
+                            # No CRV follows, apply tax now if needed
+                            if tax_indicator in ['X', 'T'] and tax_rate_multiplier:
+                                items[-1].price = round(price * tax_rate_multiplier, 2)
+                    else:
+                        # Last line, apply tax now if needed
+                        if tax_indicator in ['X', 'T'] and tax_rate_multiplier:
+                            items[-1].price = round(price * tax_rate_multiplier, 2)
             
             # Pattern 2: Item name on current line, price on next line
             # This includes weight-based items (e.g., "CHOCOLATE 850041392020 F" followed by "1.000 oz @ 1 oz /5.97 5.97 N")
@@ -224,8 +376,8 @@ class ReceiptParser:
                     # Clean up item name
                     name = cls._clean_item_name(name)
                     
-                    # Apply tax multiplier if X indicator found
-                    if tax_indicator == 'X' and tax_rate_multiplier:
+                    # Apply tax multiplier if X or T indicator found (T = taxable)
+                    if tax_indicator in ['X', 'T'] and tax_rate_multiplier:
                         price = price * tax_rate_multiplier
                         price = round(price, 2)
                     
@@ -254,16 +406,16 @@ class ReceiptParser:
                         name = re.sub(r'\d{12,}', '', name)  # Remove product codes
                         name = re.sub(r'\s+[A-Z]\s*$', '', name)  # Remove trailing single letters
                         
-                        # Check for tax indicator in next line
-                        next_tax_match = re.search(r'\s+([XN])\s*$', next_line)
+                        # Check for tax indicator in next line (X, N, or T)
+                        next_tax_match = re.search(r'\s+([XNT])\s*$', next_line)
                         if next_tax_match:
                             tax_indicator = next_tax_match.group(1)
                         
                         # Clean up item name
                         name = cls._clean_item_name(name)
                         
-                        # Apply tax multiplier if X indicator found
-                        if tax_indicator == 'X' and tax_rate_multiplier:
+                        # Apply tax multiplier if X or T indicator found (T = taxable)
+                        if tax_indicator in ['X', 'T'] and tax_rate_multiplier:
                             price = price * tax_rate_multiplier
                             price = round(price, 2)
                         
@@ -467,29 +619,38 @@ class ReceiptParser:
     @classmethod
     def _extract_subtotal(cls, text: str) -> Optional[float]:
         """
-        Extract subtotal amount from receipt
+        Extract subtotal amount from receipt directly from raw text
         
         Args:
             text: Raw receipt text
             
         Returns:
-            Subtotal amount if found, None otherwise
+            Subtotal amount if found, or calculated as total - tax if not found
         """
         # Handle escaped newlines (handle both \\\\n and \\n)
         text = text.replace('\\\\n', '\n').replace('\\n', '\n')
         text_upper = text.upper()
         
+        # Try to extract SUBTOTAL from receipt
         for pattern in cls.SUBTOTAL_PATTERNS:
             match = re.search(pattern, text_upper)
             if match:
-                return float(match.group(1))
+                try:
+                    subtotal = float(match.group(1))
+                    return subtotal
+                except (ValueError, IndexError):
+                    continue
         
-        # If subtotal not found, calculate from items
-        items, _, _ = cls.parse(text)
-        if items:
-            subtotal = sum(item.price * item.quantity for item in items)
-            return round(subtotal, 2)
+        # If not found, calculate as total - tax
+        total = cls._extract_total(text)
+        tax = cls._extract_tax(text)
         
+        if total is not None and tax is not None:
+            subtotal = total - tax
+            if subtotal > 0:
+                return round(subtotal, 2)
+        
+        # If still not found, return None
         return None
     
     @classmethod
