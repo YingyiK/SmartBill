@@ -2,7 +2,7 @@
 Main FastAPI application for OCR service
 Handles receipt image upload and text extraction
 """
-from fastapi import FastAPI, File, UploadFile, HTTPException, Query, Body, Body
+from fastapi import FastAPI, File, UploadFile, HTTPException, Query, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import logging

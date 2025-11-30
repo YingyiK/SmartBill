@@ -1,0 +1,92 @@
+.loading-state {
+  text-align: center;
+  padding: 40px;
+  color: #666;
+}
+
+.expenses-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.expense-item {
+  position: relative;
+  padding: 16px;
+  background: white;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+  transition: box-shadow 0.2s;
+}
+
+.expense-item:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.expense-delete-btn {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  padding: 6px;
+  background: transparent;
+  border: none;
+  color: #ef4444;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background-color 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.expense-delete-btn:hover {
+  background-color: #fee2e2;
+  color: #dc2626;
+}
+
+.expense-delete-btn:active {
+  background-color: #fecaca;
+}
+
+.expense-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.expense-store {
+  font-weight: 600;
+  font-size: 16px;
+  color: #333;
+}
+
+.expense-amount {
+  font-weight: 700;
+  font-size: 18px;
+  color: #10b981;
+}
+
+.expense-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 14px;
+  color: #666;
+}
+
+.expense-date {
+  color: #9ca3af;
+}
+
+.expense-items-count {
+  color: #6b7280;
+}
+
+.expense-transcript {
+  color: #4b5563;
+  font-style: italic;
+  flex-basis: 100%;
+  margin-top: 4px;
+}
+
