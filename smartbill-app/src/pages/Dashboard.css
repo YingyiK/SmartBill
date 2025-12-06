@@ -90,3 +90,109 @@
   margin-top: 4px;
 }
 
+/* Expense Tabs */
+.expenses-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.tab-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.tab-button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border: 1px solid #e5e7eb;
+  background: white;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #6b7280;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.tab-button:hover {
+  border-color: #2563eb;
+  color: #2563eb;
+}
+
+.tab-button.active {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: white;
+}
+
+/* Expense Item with Actions */
+.expense-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+
+.expense-main {
+  flex: 1;
+}
+
+.expense-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.action-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border: 1px solid #e5e7eb;
+  background: white;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.split-btn {
+  color: #2563eb;
+  border-color: #2563eb;
+}
+
+.split-btn:hover {
+  background: #eff6ff;
+  transform: translateY(-1px);
+}
+
+.delete-btn {
+  color: #dc2626;
+  border-color: #fee2e2;
+}
+
+.delete-btn:hover {
+  background: #fef2f2;
+  border-color: #dc2626;
+}
+
+.view-btn {
+  color: #6b7280;
+}
+
+.view-btn:hover {
+  background: #f9fafb;
+  border-color: #9ca3af;
+}
+
+.empty-subtext {
+  font-size: 14px;
+  color: #9ca3af;
+  margin: 8px 0 16px 0;
+}
+

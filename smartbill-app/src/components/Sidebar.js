@@ -47,12 +47,42 @@
 
 // export default Sidebar;
 
-import React from "react";
-import { Link, useLocation } from "react-router-dom";
-import { Receipt, Plus, Users, History, Settings } from "lucide-react";
+import React, { useState, useEffect } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { Receipt, Plus, Users, History, Settings, LogOut } from "lucide-react";
+import authService from "../services/authService";
 
 export default function Sidebar() {
   const location = useLocation();
+  const navigate = useNavigate();
+  const [user, setUser] = useState(null);
+
+  useEffect(() => {
+    loadUser();
+  }, []);
+
+  const loadUser = () => {
+    const currentUser = authService.getCurrentUser();
+    setUser(currentUser);
+  };
+
+  const handleLogout = () => {
+    if (window.confirm('Are you sure you want to logout?')) {
+      authService.logout();
+      navigate('/login');
+    }
+  };
+
+  const getUserInitial = () => {
+    if (user?.email) {
+      return user.email[0].toUpperCase();
+    }
+    return 'U';
+  };
+
+  const getUserEmail = () => {
+    return user?.email || 'user@example.com';
+  };
 
   return (
     <aside className="sidebar">
@@ -84,7 +114,7 @@ export default function Sidebar() {
           className={`nav-item ${location.pathname === '/participants' ? 'active' : ''}`}
         >
           <Users size={18} />
-          Participants
+          Contacts
         </Link>
         <Link 
           to="/history" 
@@ -102,12 +132,18 @@ export default function Sidebar() {
         </Link>
       </nav>
 
-      <div className="user-info">
-        <div className="user-circle">U</div>
-        <div>
-          <div className="user-name">User</div>
-          <div className="user-email">user@example.com</div>
+      <div className="user-section">
+        <div className="user-info">
+          <div className="user-circle">{getUserInitial()}</div>
+          <div className="user-details">
+            <div className="user-name">{getUserEmail().split('@')[0]}</div>
+            <div className="user-email">{getUserEmail()}</div>
+          </div>
         </div>
+        <button className="logout-btn" onClick={handleLogout} title="Logout">
+          <LogOut size={18} />
+          Logout
+        </button>
       </div>
     </aside>
   );

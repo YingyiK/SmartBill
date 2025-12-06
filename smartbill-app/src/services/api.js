@@ -237,10 +237,26 @@ export const ocrAPI = {
 export const sttAPI = {
   /**
    * Process voice input for expense
+   * @param {File} audioFile - Audio file to process
+   * @param {Array<string>} groupMembers - Optional list of group member names to help AI parsing
+   * @param {Array} ocrItems - Optional list of OCR items to match against
    */
-  processVoice: async (audioFile) => {
+  processVoice: async (audioFile, groupMembers = null, ocrItems = null, currentUserName = null) => {
     const formData = new FormData();
     formData.append('audio', audioFile);
+    if (groupMembers && groupMembers.length > 0) {
+      formData.append('group_members', JSON.stringify(groupMembers));
+    }
+    if (ocrItems && ocrItems.length > 0) {
+      // Extract item names from OCR items (handle both object format and string format)
+      const itemNames = ocrItems.map(item => 
+        typeof item === 'object' && item !== null ? item.name : item
+      );
+      formData.append('ocr_items', JSON.stringify(itemNames));
+    }
+    if (currentUserName) {
+      formData.append('current_user_name', currentUserName);
+    }
     
     const token = getToken();
     const response = await fetch(`${API_BASE_URL}/api/stt/process-voice`, {
@@ -257,12 +273,39 @@ export const sttAPI = {
       throw new Error('Unauthorized');
     }
     
-    const data = await response.json();
-    
     if (!response.ok) {
-      throw new Error(data.detail || data.message || 'STT failed');
+      let errorMessage = 'STT failed';
+      try {
+        const errorData = await response.json();
+        // Handle different error formats
+        if (errorData.detail) {
+          // FastAPI error format
+          if (Array.isArray(errorData.detail)) {
+            // Validation errors
+            errorMessage = errorData.detail.map(err => {
+              if (typeof err === 'object' && err.msg) {
+                return `${err.loc?.join('.') || 'field'}: ${err.msg}`;
+              }
+              return String(err);
+            }).join(', ');
+          } else if (typeof errorData.detail === 'string') {
+            errorMessage = errorData.detail;
+          } else {
+            errorMessage = JSON.stringify(errorData.detail);
+          }
+        } else if (errorData.message) {
+          errorMessage = errorData.message;
+        } else {
+          errorMessage = JSON.stringify(errorData);
+        }
+      } catch (e) {
+        // If JSON parse fails, use status text
+        errorMessage = response.statusText || 'STT failed';
+      }
+      throw new Error(errorMessage);
     }
     
+    const data = await response.json();
     return data;
   },
 };
@@ -306,11 +349,159 @@ export const expenseAPI = {
   },
 
   /**
+   * Get expenses shared with me
+   */
+  getSharedExpenses: async (limit = 50, offset = 0) => {
+    return apiRequest(`/api/expenses/shared-with-me?limit=${limit}&offset=${offset}`, {
+      method: 'GET',
+    });
+  },
+
+  /**
    * Delete an expense
    */
   deleteExpense: async (expenseId) => {
     return apiRequest(`/api/expenses/${expenseId}`, {
       method: 'DELETE',
+    });
+  },
+};
+
+/**
+ * Contacts API
+ */
+export const contactsAPI = {
+  /**
+   * Get user's contacts
+   */
+  getContacts: async () => {
+    return apiRequest('/api/contacts', {
+      method: 'GET',
+    });
+  },
+
+  /**
+   * Add a new contact
+   */
+  addContact: async (friendEmail, nickname = null) => {
+    return apiRequest('/api/contacts', {
+      method: 'POST',
+      body: JSON.stringify({
+        friend_email: friendEmail,
+        nickname: nickname,
+      }),
+    });
+  },
+
+  /**
+   * Update a contact's nickname
+   */
+  updateContact: async (contactId, nickname) => {
+    return apiRequest(`/api/contacts/${contactId}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        nickname: nickname,
+      }),
+    });
+  },
+
+  /**
+   * Delete a contact
+   */
+  deleteContact: async (contactId) => {
+    return apiRequest(`/api/contacts/${contactId}`, {
+      method: 'DELETE',
+    });
+  },
+};
+
+/**
+ * Contact Groups API
+ */
+export const contactGroupsAPI = {
+  /**
+   * Get user's contact groups
+   */
+  getContactGroups: async () => {
+    return apiRequest('/api/contact-groups', {
+      method: 'GET',
+    });
+  },
+
+  /**
+   * Create a new contact group
+   */
+  createContactGroup: async (name, description = null, contactIds = []) => {
+    return apiRequest('/api/contact-groups', {
+      method: 'POST',
+      body: JSON.stringify({
+        name,
+        description,
+        contact_ids: contactIds,
+      }),
+    });
+  },
+
+  /**
+   * Update a contact group
+   */
+  updateContactGroup: async (groupId, name = null, description = null, contactIds = null) => {
+    return apiRequest(`/api/contact-groups/${groupId}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        name,
+        description,
+        contact_ids: contactIds,
+      }),
+    });
+  },
+
+  /**
+   * Delete a contact group
+   */
+  deleteContactGroup: async (groupId) => {
+    return apiRequest(`/api/contact-groups/${groupId}`, {
+      method: 'DELETE',
+    });
+  },
+};
+
+/**
+ * Splits API
+ */
+export const splitsAPI = {
+  /**
+   * Create expense splits
+   */
+  createSplits: async (expenseId, participants) => {
+    return apiRequest(`/api/expenses/${expenseId}/splits`, {
+      method: 'POST',
+      body: JSON.stringify({
+        expense_id: expenseId,
+        participants: participants,
+      }),
+    });
+  },
+
+  /**
+   * Get expense splits
+   */
+  getSplits: async (expenseId) => {
+    return apiRequest(`/api/expenses/${expenseId}/splits`, {
+      method: 'GET',
+    });
+  },
+
+  /**
+   * Send bills to participants
+   */
+  sendBills: async (expenseId, participantIds) => {
+    return apiRequest(`/api/expenses/${expenseId}/send-bills`, {
+      method: 'POST',
+      body: JSON.stringify({
+        expense_id: expenseId,
+        participant_ids: participantIds,
+      }),
     });
   },
 };
@@ -321,5 +512,8 @@ export default {
   stt: sttAPI,
   ai: aiAPI,
   expense: expenseAPI,
+  contacts: contactsAPI,
+  contactGroups: contactGroupsAPI,
+  splits: splitsAPI,
 };
 

@@ -1,13 +1,18 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Receipt, DollarSign, Users, TrendingUp, Plus, FileText, Trash2 } from "lucide-react";
+import { Receipt, DollarSign, Users, TrendingUp, Plus, FileText, Trash2, Share2, Eye } from "lucide-react";
 import { expenseAPI } from "../services/api";
+import SplitBillModal from "../components/SplitBillModal";
 import "./Dashboard.css";
 
 export default function Dashboard() {
   const navigate = useNavigate();
   const [expenses, setExpenses] = useState([]);
+  const [sharedExpenses, setSharedExpenses] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState('my'); // 'my' or 'shared'
+  const [selectedExpense, setSelectedExpense] = useState(null);
+  const [isSplitModalOpen, setIsSplitModalOpen] = useState(false);
   const [stats, setStats] = useState({
     totalExpenses: 0,
     totalAmount: 0,
@@ -16,8 +21,15 @@ export default function Dashboard() {
   });
 
   useEffect(() => {
-    loadExpenses();
+    loadAllData();
   }, []);
+
+  const loadAllData = async () => {
+    await Promise.all([
+      loadExpenses(),
+      loadSharedExpenses()
+    ]);
+  };
 
   const loadExpenses = async () => {
     try {
@@ -49,6 +61,15 @@ export default function Dashboard() {
     }
   };
 
+  const loadSharedExpenses = async () => {
+    try {
+      const response = await expenseAPI.getSharedExpenses(50, 0);
+      setSharedExpenses(response.expenses || []);
+    } catch (error) {
+      console.error('Failed to load shared expenses:', error);
+    }
+  };
+
   const handleDeleteExpense = async (expenseId, expenseName) => {
     if (!window.confirm(`Are you sure you want to delete this expense from ${expenseName || 'Unknown Store'}? This action cannot be undone.`)) {
       return;
@@ -56,12 +77,20 @@ export default function Dashboard() {
 
     try {
       await expenseAPI.deleteExpense(expenseId);
-      // Reload expenses after deletion
       await loadExpenses();
     } catch (error) {
       console.error('Failed to delete expense:', error);
       alert(`Failed to delete expense: ${error.message || 'Unknown error'}`);
     }
+  };
+
+  const handleSplitBill = (expense) => {
+    setSelectedExpense(expense);
+    setIsSplitModalOpen(true);
+  };
+
+  const handleSplitSuccess = () => {
+    loadAllData(); // Reload all data
   };
 
   const statsData = [
@@ -95,6 +124,8 @@ export default function Dashboard() {
     }
   ];
 
+  const displayExpenses = activeTab === 'my' ? expenses : sharedExpenses;
+
   return (
     <main className="main">
       <div className="header">
@@ -121,55 +152,108 @@ export default function Dashboard() {
       </div>
 
       <div className="recent-box">
-        <h3>Recent Expenses</h3>
+        <div className="expenses-header">
+          <h3>Expenses</h3>
+          <div className="tab-buttons">
+            <button
+              className={`tab-button ${activeTab === 'my' ? 'active' : ''}`}
+              onClick={() => setActiveTab('my')}
+            >
+              <Receipt size={16} />
+              My Expenses ({expenses.length})
+            </button>
+            <button
+              className={`tab-button ${activeTab === 'shared' ? 'active' : ''}`}
+              onClick={() => setActiveTab('shared')}
+            >
+              <Share2 size={16} />
+              Shared with Me ({sharedExpenses.length})
+            </button>
+          </div>
+        </div>
 
         {loading ? (
           <div className="loading-state">
             <p>Loading expenses...</p>
           </div>
-        ) : expenses.length === 0 ? (
+        ) : displayExpenses.length === 0 ? (
           <div className="empty">
             <div className="empty-icon">
               <Receipt size={48} color="#d1d5db" />
             </div>
-            <div className="empty-text">No expenses yet</div>
-            <button className="btn" onClick={() => navigate('/new-expense')}>
-              + Create Your First Expense
-            </button>
+            <div className="empty-text">
+              {activeTab === 'my' ? 'No expenses yet' : 'No shared expenses yet'}
+            </div>
+            <p className="empty-subtext">
+              {activeTab === 'my' 
+                ? 'Create your first expense to get started'
+                : 'When friends split bills with you, they\'ll appear here'}
+            </p>
+            {activeTab === 'my' && (
+              <button className="btn" onClick={() => navigate('/new-expense')}>
+                + Create Your First Expense
+              </button>
+            )}
           </div>
         ) : (
           <div className="expenses-list">
-            {expenses.map((expense) => (
+            {displayExpenses.map((expense) => (
               <div key={expense.id} className="expense-item">
-                <div className="expense-header">
-                  <div className="expense-store">{expense.store_name || 'Unknown Store'}</div>
-                  <div className="expense-amount">${expense.total_amount.toFixed(2)}</div>
-                </div>
-                <div className="expense-details">
-                  <div className="expense-date">
-                    {new Date(expense.created_at).toLocaleDateString()}
-                  </div>
-                  {expense.items && expense.items.length > 0 && (
-                    <div className="expense-items-count">
-                      {expense.items.length} items
-                    </div>
-                  )}
-                  {expense.transcript && (
-                    <div className="expense-transcript">
-                      💬 {expense.transcript.substring(0, 50)}...
-                    </div>
-                  )}
-                </div>
-                <button
-                  className="expense-delete-btn"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleDeleteExpense(expense.id, expense.store_name);
-                  }}
-                  title="Delete expense"
+                <div 
+                  className="expense-main"
+                  onClick={() => navigate(`/expense/${expense.id}`)}
+                  style={{ cursor: 'pointer' }}
                 >
-                  <Trash2 size={16} />
-                </button>
+                  <div className="expense-header">
+                    <div className="expense-store">{expense.store_name || 'Unknown Store'}</div>
+                    <div className="expense-amount">${expense.total_amount.toFixed(2)}</div>
+                  </div>
+                  <div className="expense-details">
+                    <div className="expense-date">
+                      {new Date(expense.created_at).toLocaleDateString()}
+                    </div>
+                    {expense.items && expense.items.length > 0 && (
+                      <div className="expense-items-count">
+                        {expense.items.length} items
+                      </div>
+                    )}
+                    {expense.transcript && (
+                      <div className="expense-transcript">
+                        💬 {expense.transcript.substring(0, 50)}...
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="expense-actions" onClick={(e) => e.stopPropagation()}>
+                  {activeTab === 'my' ? (
+                    <>
+                      <button
+                        className="action-btn split-btn"
+                        onClick={() => handleSplitBill(expense)}
+                        title="Split & send bills"
+                      >
+                        <Share2 size={16} />
+                        Split
+                      </button>
+                      <button
+                        className="action-btn delete-btn"
+                        onClick={() => handleDeleteExpense(expense.id, expense.store_name)}
+                        title="Delete expense"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      className="action-btn view-btn"
+                      onClick={() => navigate(`/expense/${expense.id}`)}
+                      title="View expense"
+                    >
+                      <Eye size={16} />
+                      View
+                    </button>
+                  )}
+                </div>
               </div>
             ))}
           </div>
@@ -188,8 +272,8 @@ export default function Dashboard() {
           <div className="box-icon purple">
             <Users size={24} />
           </div>
-          <h4>Manage Participants</h4>
-          <p>Add or edit participant information</p>
+          <h4>Manage Contacts</h4>
+          <p>Add friends to split bills with</p>
         </div>
         <div className="box" onClick={() => navigate('/history')}>
           <div className="box-icon green">
@@ -199,6 +283,19 @@ export default function Dashboard() {
           <p>Browse all past expenses and splits</p>
         </div>
       </div>
+
+      {/* Split Bill Modal */}
+      {isSplitModalOpen && selectedExpense && (
+        <SplitBillModal
+          isOpen={isSplitModalOpen}
+          onClose={() => {
+            setIsSplitModalOpen(false);
+            setSelectedExpense(null);
+          }}
+          expense={selectedExpense}
+          onSuccess={handleSplitSuccess}
+        />
+      )}
     </main>
   );
 }

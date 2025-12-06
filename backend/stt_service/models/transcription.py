@@ -2,7 +2,7 @@ import whisper
 import tempfile
 import os
 from fastapi import UploadFile
-from config import settings
+from stt_service.config import settings
 
 class TranscriptionService:
     def __init__(self):
@@ -35,7 +35,7 @@ class TranscriptionService:
                 content = await audio_file.read()
                 temp_file.write(content)
                 temp_path = temp_file.name
-        
+            
             # Load model if not already loaded
             model = self._load_model()
             
