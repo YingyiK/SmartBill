@@ -29,78 +29,82 @@ function App() {
 
   return (
     <Router>
-      <div className="app">
-        {isAuthenticated && <Sidebar />}
-        <Routes>
-          {/* 公开路由 */}
-          <Route
-            path="/login"
-            element={isAuthenticated ? <Navigate to="/new-expense" replace /> : <Login onLogin={() => setIsAuthenticated(true)} />}
-          />
-          <Route
-            path="/register"
-            element={isAuthenticated ? <Navigate to="/new-expense" replace /> : <Register onRegister={() => setIsAuthenticated(true)} />}
-          />
+      {isAuthenticated ? (
+        // 已登录：使用固定侧边栏布局
+        <div className="flex h-screen overflow-hidden bg-gray-50">
+          {/* 固定侧边栏 */}
+          <div className="w-64 flex-shrink-0 bg-white border-r border-gray-200 overflow-y-auto">
+            <Sidebar />
+          </div>
 
-          {/* 受保护路由 */}
-          <Route
-            path="/"
-            element={
-              <ProtectedRoute>
-                <Navigate to="/new-expense" replace />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/dashboard"
-            element={
-              <ProtectedRoute>
-                <Dashboard />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/new-expense"
-            element={
-              <ProtectedRoute>
-                <NewExpense />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/participants"
-            element={
-              <ProtectedRoute>
-                <Participants />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/history"
-            element={
-              <ProtectedRoute>
-                <History />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/settings"
-            element={
-              <ProtectedRoute>
-                <Settings />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/expense/:id"
-            element={
-              <ProtectedRoute>
-                <ExpenseDetail />
-              </ProtectedRoute>
-            }
-          />
-        </Routes>
-      </div>
+          {/* 主内容区域 */}
+          <div className="flex-1 overflow-y-auto">
+            <Routes>
+              <Route path="/login" element={<Navigate to="/new-expense" replace />} />
+              <Route path="/register" element={<Navigate to="/new-expense" replace />} />
+              <Route path="/" element={<Navigate to="/new-expense" replace />} />
+              
+              <Route
+                path="/dashboard"
+                element={
+                  <ProtectedRoute>
+                    <Dashboard />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/new-expense"
+                element={
+                  <ProtectedRoute>
+                    <NewExpense />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/participants"
+                element={
+                  <ProtectedRoute>
+                    <Participants />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/history"
+                element={
+                  <ProtectedRoute>
+                    <History />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/settings"
+                element={
+                  <ProtectedRoute>
+                    <Settings />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/expense/:id"
+                element={
+                  <ProtectedRoute>
+                    <ExpenseDetail />
+                  </ProtectedRoute>
+                }
+              />
+            </Routes>
+          </div>
+        </div>
+      ) : (
+        // 未登录：全屏显示登录/注册页面
+        <div className="min-h-screen bg-gray-50">
+          <Routes>
+            <Route path="/login" element={<Login onLogin={() => setIsAuthenticated(true)} />} />
+            <Route path="/register" element={<Register onRegister={() => setIsAuthenticated(true)} />} />
+            <Route path="*" element={<Navigate to="/login" replace />} />
+          </Routes>
+        </div>
+      )}
     </Router>
   );
 }
