@@ -1,7 +1,7 @@
 """
 Main API Gateway Service - Routes requests to microservices
 """
-from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Header
+from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Header, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import httpx
@@ -207,13 +207,15 @@ async def test_ocr_parser(
 @app.post("/api/stt/process-voice")
 async def process_voice_expense(
     audio: UploadFile = File(...),
-    group_members: Optional[str] = None,  # JSON string of group member names
+    group_members: Optional[str] = Form(None),  # JSON string from FormData as form field
+    ocr_items: Optional[str] = Form(None),  # JSON string array of OCR item names
+    current_user_name: Optional[str] = Form(None),  # Current user's name/email username
     user: dict = Depends(verify_token)
 ):
     """
     Process voice input for expense
     Requires authentication
-    group_members: Optional JSON string array of group member names
+    group_members: Optional JSON string array of group member names from FormData
     """
     audio_bytes = await audio.read()
     
@@ -221,18 +223,60 @@ async def process_voice_expense(
         try:
             files = {"audio": (audio.filename or "audio.webm", audio_bytes, audio.content_type or "audio/webm")}
             data = {}
-            if group_members:
-                import json
-                try:
-                    members_list = json.loads(group_members)
-                    data["group_members"] = members_list
-                except json.JSONDecodeError:
-                    pass  # Ignore invalid JSON
             
+            # group_members and ocr_items come as strings from FormData
+            import json
+            
+            if group_members:
+                try:
+                    # Parse JSON string to validate it's a list
+                    members_list = json.loads(group_members)
+                    
+                    # Ensure it's a list
+                    if not isinstance(members_list, list):
+                        if isinstance(members_list, str):
+                            members_list = [members_list]
+                        else:
+                            print(f"Warning: group_members is not a list: {type(members_list)}")
+                            members_list = []
+                    
+                    # Send as JSON string in form data
+                    if members_list:
+                        data["group_members"] = json.dumps(members_list)
+                except (json.JSONDecodeError, TypeError) as e:
+                    print(f"Warning: Could not parse group_members as JSON: {e}")
+            
+            if ocr_items:
+                try:
+                    # Parse JSON string to validate it's a list
+                    items_list = json.loads(ocr_items)
+                    
+                    # Ensure it's a list
+                    if not isinstance(items_list, list):
+                        print(f"Warning: ocr_items is not a list: {type(items_list)}")
+                        items_list = []
+                    
+                    # Send as JSON string in form data
+                    if items_list:
+                        data["ocr_items"] = json.dumps(items_list)
+                except (json.JSONDecodeError, TypeError) as e:
+                    print(f"Warning: Could not parse ocr_items as JSON: {e}")
+            
+            # Pass current user name (email username) for "I" mapping
+            if current_user_name:
+                data["current_user_name"] = current_user_name
+            elif user and user.get("email"):
+                # Extract email username (before @) as default
+                email_username = user["email"].split("@")[0]
+                data["current_user_name"] = email_username.lower()
+            
+            # STT service expects multipart/form-data with audio as file
+            # and group_members as form field (if provided)
+            # When using httpx with files, data fields are sent as form fields
             response = await client.post(
                 f"{STT_SERVICE_URL}/process-voice-expense",
                 files=files,
-                data=data,
+                data=data,  # This will be sent as form fields
                 timeout=60.0
             )
             if response.status_code == 200:
@@ -589,6 +633,313 @@ async def delete_group(
                     status_code=response.status_code,
                     detail=response.text
                 )
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=503, detail=f"Auth service unavailable: {str(e)}")
+
+
+# ==================== Expense Split Routes ====================
+
+@app.post("/api/expenses/{expense_id}/splits")
+async def create_expense_splits(
+    expense_id: str,
+    request: dict,
+    authorization: str = Header(None),
+    user: dict = Depends(verify_token)
+):
+    """Create expense splits"""
+    async with httpx.AsyncClient() as client:
+        try:
+            headers = {}
+            if authorization:
+                headers["Authorization"] = authorization
+            
+            response = await client.post(
+                f"{AUTH_SERVICE_URL}/expenses/{expense_id}/splits",
+                json=request,
+                headers=headers
+            )
+            if response.status_code == 200:
+                return response.json()
+            else:
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=response.text
+                )
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=503, detail=f"Auth service unavailable: {str(e)}")
+
+
+@app.get("/api/expenses/{expense_id}/splits")
+async def get_expense_splits(
+    expense_id: str,
+    authorization: str = Header(None),
+    user: dict = Depends(verify_token)
+):
+    """Get expense splits"""
+    async with httpx.AsyncClient() as client:
+        try:
+            headers = {}
+            if authorization:
+                headers["Authorization"] = authorization
+            
+            response = await client.get(
+                f"{AUTH_SERVICE_URL}/expenses/{expense_id}/splits",
+                headers=headers
+            )
+            if response.status_code == 200:
+                return response.json()
+            else:
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=response.text
+                )
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=503, detail=f"Auth service unavailable: {str(e)}")
+
+
+@app.post("/api/expenses/{expense_id}/send-bills")
+async def send_bills_to_participants(
+    expense_id: str,
+    request: dict,
+    authorization: str = Header(None),
+    user: dict = Depends(verify_token)
+):
+    """Send bills to participants"""
+    async with httpx.AsyncClient() as client:
+        try:
+            headers = {}
+            if authorization:
+                headers["Authorization"] = authorization
+            
+            response = await client.post(
+                f"{AUTH_SERVICE_URL}/expenses/{expense_id}/send-bills",
+                json=request,
+                headers=headers
+            )
+            if response.status_code == 200:
+                return response.json()
+            else:
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=response.text
+                )
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=503, detail=f"Auth service unavailable: {str(e)}")
+
+
+@app.get("/api/expenses/shared-with-me")
+async def get_shared_expenses(
+    authorization: str = Header(None),
+    user: dict = Depends(verify_token)
+):
+    """Get expenses shared with current user"""
+    async with httpx.AsyncClient() as client:
+        try:
+            headers = {}
+            if authorization:
+                headers["Authorization"] = authorization
+            
+            response = await client.get(
+                f"{AUTH_SERVICE_URL}/expenses/shared-with-me",
+                headers=headers
+            )
+            if response.status_code == 200:
+                return response.json()
+            else:
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=response.text
+                )
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=503, detail=f"Auth service unavailable: {str(e)}")
+
+
+# ==================== Contact Routes ====================
+
+@app.get("/api/contacts")
+async def get_contacts(
+    authorization: str = Header(None),
+    user: dict = Depends(verify_token)
+):
+    """Get user's contacts"""
+    async with httpx.AsyncClient() as client:
+        try:
+            headers = {}
+            if authorization:
+                headers["Authorization"] = authorization
+            
+            response = await client.get(
+                f"{AUTH_SERVICE_URL}/contacts",
+                headers=headers
+            )
+            return response.json()
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=503, detail=f"Auth service unavailable: {str(e)}")
+
+
+@app.post("/api/contacts")
+async def add_contact(
+    request: dict,
+    authorization: str = Header(None),
+    user: dict = Depends(verify_token)
+):
+    """Add a contact"""
+    async with httpx.AsyncClient() as client:
+        try:
+            headers = {}
+            if authorization:
+                headers["Authorization"] = authorization
+            
+            response = await client.post(
+                f"{AUTH_SERVICE_URL}/contacts",
+                json=request,
+                headers=headers
+            )
+            return response.json()
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=503, detail=f"Auth service unavailable: {str(e)}")
+
+
+@app.put("/api/contacts/{contact_id}")
+async def update_contact(
+    contact_id: str,
+    request: dict,
+    authorization: str = Header(None),
+    user: dict = Depends(verify_token)
+):
+    """Update a contact's nickname"""
+    async with httpx.AsyncClient() as client:
+        try:
+            headers = {}
+            if authorization:
+                headers["Authorization"] = authorization
+            
+            response = await client.put(
+                f"{AUTH_SERVICE_URL}/contacts/{contact_id}",
+                json=request,
+                headers=headers
+            )
+            if response.status_code == 200:
+                return response.json()
+            else:
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=response.text
+                )
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=503, detail=f"Auth service unavailable: {str(e)}")
+
+
+@app.delete("/api/contacts/{contact_id}")
+async def delete_contact(
+    contact_id: str,
+    authorization: str = Header(None),
+    user: dict = Depends(verify_token)
+):
+    """Delete a contact"""
+    async with httpx.AsyncClient() as client:
+        try:
+            headers = {}
+            if authorization:
+                headers["Authorization"] = authorization
+            
+            response = await client.delete(
+                f"{AUTH_SERVICE_URL}/contacts/{contact_id}",
+                headers=headers
+            )
+            return response.json()
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=503, detail=f"Auth service unavailable: {str(e)}")
+
+
+# ==================== Contact Group Routes ====================
+
+@app.get("/api/contact-groups")
+async def get_contact_groups(
+    authorization: str = Header(None),
+    user: dict = Depends(verify_token)
+):
+    """Get user's contact groups"""
+    async with httpx.AsyncClient() as client:
+        try:
+            headers = {}
+            if authorization:
+                headers["Authorization"] = authorization
+            
+            response = await client.get(
+                f"{AUTH_SERVICE_URL}/contact-groups",
+                headers=headers
+            )
+            return response.json()
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=503, detail=f"Auth service unavailable: {str(e)}")
+
+
+@app.post("/api/contact-groups")
+async def create_contact_group(
+    request: dict,
+    authorization: str = Header(None),
+    user: dict = Depends(verify_token)
+):
+    """Create a contact group"""
+    async with httpx.AsyncClient() as client:
+        try:
+            headers = {}
+            if authorization:
+                headers["Authorization"] = authorization
+            
+            response = await client.post(
+                f"{AUTH_SERVICE_URL}/contact-groups",
+                json=request,
+                headers=headers
+            )
+            return response.json()
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=503, detail=f"Auth service unavailable: {str(e)}")
+
+
+@app.put("/api/contact-groups/{group_id}")
+async def update_contact_group(
+    group_id: str,
+    request: dict,
+    authorization: str = Header(None),
+    user: dict = Depends(verify_token)
+):
+    """Update a contact group"""
+    async with httpx.AsyncClient() as client:
+        try:
+            headers = {}
+            if authorization:
+                headers["Authorization"] = authorization
+            
+            response = await client.put(
+                f"{AUTH_SERVICE_URL}/contact-groups/{group_id}",
+                json=request,
+                headers=headers
+            )
+            return response.json()
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=503, detail=f"Auth service unavailable: {str(e)}")
+
+
+@app.delete("/api/contact-groups/{group_id}")
+async def delete_contact_group(
+    group_id: str,
+    authorization: str = Header(None),
+    user: dict = Depends(verify_token)
+):
+    """Delete a contact group"""
+    async with httpx.AsyncClient() as client:
+        try:
+            headers = {}
+            if authorization:
+                headers["Authorization"] = authorization
+            
+            response = await client.delete(
+                f"{AUTH_SERVICE_URL}/contact-groups/{group_id}",
+                headers=headers
+            )
+            return response.json()
         except httpx.RequestError as e:
             raise HTTPException(status_code=503, detail=f"Auth service unavailable: {str(e)}")
 

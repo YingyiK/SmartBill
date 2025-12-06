@@ -1,7 +1,7 @@
 """
 Database models for authentication service
 """
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Numeric
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Numeric, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func
@@ -100,4 +100,60 @@ class GroupMember(Base):
     name = Column(String(255), nullable=False)
     email = Column(String(255), nullable=True)  # Optional email for future use
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class Contact(Base):
+    """User's contact list (friends who are registered users)"""
+    __tablename__ = "contacts"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    friend_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    nickname = Column(String(255), nullable=True)  # Optional nickname/note
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class ContactGroup(Base):
+    """Groups for organizing contacts"""
+    __tablename__ = "contact_groups"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    name = Column(String(255), nullable=False)
+    description = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+
+class ContactGroupMember(Base):
+    """Many-to-many relationship between contacts and groups"""
+    __tablename__ = "contact_group_members"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    group_id = Column(UUID(as_uuid=True), ForeignKey("contact_groups.id", ondelete="CASCADE"), nullable=False, index=True)
+    contact_id = Column(UUID(as_uuid=True), ForeignKey("contacts.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Ensure a contact can only be in a group once per group
+    __table_args__ = (
+        UniqueConstraint('group_id', 'contact_id', name='_contact_group_uc'),
+    )
+
+
+class ExpenseSplit(Base):
+    """Detailed expense split information for each participant"""
+    __tablename__ = "expense_splits"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    expense_id = Column(UUID(as_uuid=True), ForeignKey("expenses.id", ondelete="CASCADE"), nullable=False, index=True)
+    participant_name = Column(String(255), nullable=False)
+    participant_email = Column(String(255), nullable=True)
+    contact_id = Column(UUID(as_uuid=True), ForeignKey("contacts.id"), nullable=True, index=True)  # Link to contact if registered
+    amount_owed = Column(Numeric(10, 2), nullable=False)  # How much this person owes
+    items_detail = Column(String, nullable=True)  # JSON string of items this person is paying for
+    is_paid = Column(Boolean, default=False, nullable=False)
+    email_sent = Column(Boolean, default=False, nullable=False)
+    email_sent_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 

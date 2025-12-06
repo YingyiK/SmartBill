@@ -1,10 +1,11 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import PageHeader from '../components/PageHeader';
 import StepIndicator from '../components/StepIndicator';
 import UploadArea from '../components/UploadArea';
-import { ocrAPI, sttAPI, expenseAPI } from '../services/api';
+import { ocrAPI, sttAPI, expenseAPI, contactGroupsAPI, contactsAPI } from '../services/api';
 import { STEPS } from '../constants';
 import { Mic, MicOff } from 'lucide-react';
+import authService from '../services/authService';
 import './NewExpense.css';
 
 const NewExpense = () => {
@@ -28,6 +29,140 @@ const NewExpense = () => {
   // Format: { participantName: [itemIndex1, itemIndex2, ...] }
   const [itemAssignments, setItemAssignments] = useState({});
   const [participants, setParticipants] = useState([]);
+  const [step5Initialized, setStep5Initialized] = useState(false); // Track if Step 5 has been initialized
+  
+  // Contact groups state
+  const [contactGroups, setContactGroups] = useState([]);
+  const [selectedGroupId, setSelectedGroupId] = useState(null);
+  const [contacts, setContacts] = useState([]); // Store all contacts for name matching
+
+  // Load contact groups and contacts on mount
+  useEffect(() => {
+    loadContactGroups();
+    loadContacts();
+  }, []);
+
+  // Helper function to match STT name with contact name (all lowercase comparison)
+  const matchContactName = useCallback((sttName) => {
+    const lowerSttName = sttName.toLowerCase().trim();
+    // Try to match with nickname first, then email username
+    const matched = contacts.find(contact => {
+      const nickname = (contact.nickname || '').toLowerCase().trim();
+      const emailUser = contact.friend_email.split('@')[0].toLowerCase().trim();
+      return nickname === lowerSttName || emailUser === lowerSttName || 
+             nickname.includes(lowerSttName) || lowerSttName.includes(nickname);
+    });
+    // Return original contact name (preserve case) if matched, otherwise return STT name in lowercase
+    return matched ? (matched.nickname || matched.friend_email.split('@')[0]) : lowerSttName;
+  }, [contacts]);
+
+  // Initialize Step 5 participants when step changes
+  const initializeStep5Participants = useCallback(() => {
+    // Priority 1: If group was selected, use group members (including creator)
+    if (selectedGroupId) {
+      const selectedGroup = contactGroups.find(g => g.id === selectedGroupId);
+      if (selectedGroup && selectedGroup.members) {
+        // Get all member names (including creator)
+        const groupMemberNames = selectedGroup.members.map(m => 
+          m.contact_nickname || m.contact_email.split('@')[0]
+        );
+        setParticipants(groupMemberNames);
+        
+        // If STT result exists, match and auto-assign items
+        if (sttResult?.participants && sttResult.participants.length > 0 && ocrResult) {
+          const initialAssignments = {};
+          sttResult.participants.forEach(participant => {
+            // Match STT name with group member name (all lowercase)
+            const lowerSttName = participant.name.toLowerCase().trim();
+            const matchedName = groupMemberNames.find(gName => {
+              const lowerGName = gName.toLowerCase().trim();
+              return lowerGName === lowerSttName || 
+                     lowerGName.includes(lowerSttName) || 
+                     lowerSttName.includes(lowerGName);
+            });
+            
+            if (matchedName && participant.items && participant.items.length > 0) {
+              const assignedIndices = [];
+              participant.items.forEach(sttItemName => {
+                // STT now returns exact OCR item names, match exactly (case-insensitive)
+                const matchingIndex = ocrResult.items?.findIndex(ocrItem => 
+                  ocrItem.name.toLowerCase().trim() === sttItemName.toLowerCase().trim()
+                );
+                if (matchingIndex !== undefined && matchingIndex !== -1 && !assignedIndices.includes(matchingIndex)) {
+                  assignedIndices.push(matchingIndex);
+                }
+              });
+              if (assignedIndices.length > 0) {
+                // Use matched group member name (preserve original case)
+                initialAssignments[matchedName] = assignedIndices;
+              }
+            }
+          });
+          setItemAssignments(initialAssignments);
+        }
+        return; // Exit early since we've initialized from group
+      }
+    }
+    
+    // Priority 2: If no group but STT result exists, match STT names with contacts
+    if (!selectedGroupId && sttResult?.participants && sttResult.participants.length > 0) {
+      const matchedNames = sttResult.participants.map(p => matchContactName(p.name));
+      setParticipants(matchedNames);
+      
+      // Auto-assign items from STT result
+      if (ocrResult) {
+        const initialAssignments = {};
+        sttResult.participants.forEach((participant, idx) => {
+          const matchedName = matchedNames[idx];
+          if (participant.items && participant.items.length > 0) {
+            const assignedIndices = [];
+            participant.items.forEach(sttItemName => {
+              // STT now returns exact OCR item names, match exactly (case-insensitive)
+              const matchingIndex = ocrResult.items?.findIndex(ocrItem => 
+                ocrItem.name.toLowerCase().trim() === sttItemName.toLowerCase().trim()
+              );
+              if (matchingIndex !== undefined && matchingIndex !== -1 && !assignedIndices.includes(matchingIndex)) {
+                assignedIndices.push(matchingIndex);
+              }
+            });
+            if (assignedIndices.length > 0) {
+              // Use matched contact name (preserve original case)
+              initialAssignments[matchedName] = assignedIndices;
+            }
+          }
+        });
+        setItemAssignments(initialAssignments);
+      }
+    }
+    // If neither group nor STT, participants array remains empty and user can manually add
+  }, [selectedGroupId, sttResult, ocrResult, contactGroups, matchContactName]);
+
+  useEffect(() => {
+    if (activeStep === 5 && !step5Initialized) {
+      initializeStep5Participants();
+      setStep5Initialized(true);
+    } else if (activeStep !== 5) {
+      setStep5Initialized(false); // Reset when leaving Step 5
+    }
+  }, [activeStep, step5Initialized, initializeStep5Participants]);
+
+  const loadContactGroups = async () => {
+    try {
+      const response = await contactGroupsAPI.getContactGroups();
+      setContactGroups(response.groups || []);
+    } catch (err) {
+      console.error('Failed to load contact groups:', err);
+    }
+  };
+
+  const loadContacts = async () => {
+    try {
+      const response = await contactsAPI.getContacts();
+      setContacts(response.contacts || []);
+    } catch (err) {
+      console.error('Failed to load contacts:', err);
+    }
+  };
 
   const handleFileSelect = (e) => {
     const file = e.target.files[0];
@@ -113,37 +248,74 @@ const NewExpense = () => {
     try {
       // Convert blob to File
       const audioFile = new File([audioBlob], 'recording.webm', { type: 'audio/webm' });
-      const result = await sttAPI.processVoice(audioFile);
+      
+      // Get selected group members if group is selected
+      // Include creator (user themselves) in the group members list
+      // Use nickname if available, otherwise use email username
+      let groupMembers = null;
+      if (selectedGroupId) {
+        const selectedGroup = contactGroups.find(g => g.id === selectedGroupId);
+        if (selectedGroup && selectedGroup.members) {
+          groupMembers = selectedGroup.members
+            .map(m => {
+              if (m.is_creator) {
+                // For creator, use current user's email username
+                const currentUser = authService.getCurrentUser();
+                if (currentUser && currentUser.email) {
+                  return currentUser.email.split('@')[0].toLowerCase();
+                }
+                return null;
+              }
+              return (m.contact_nickname || m.contact_email.split('@')[0]).toLowerCase();
+            })
+            .filter(name => name); // Filter out any null/undefined names
+        }
+      }
+      
+      // Get current user's email username for "I" mapping
+      const currentUser = authService.getCurrentUser();
+      const currentUserName = currentUser && currentUser.email 
+        ? currentUser.email.split('@')[0].toLowerCase() 
+        : null;
+      
+      // Pass OCR items to STT service for AI to match items
+      const ocrItems = ocrResult?.items || [];
+      console.log('Sending to STT:', { groupMembers, ocrItems, currentUserName });
+      const result = await sttAPI.processVoice(audioFile, groupMembers, ocrItems, currentUserName);
       const transcriptText = result.transcript || (typeof result === 'string' ? result : '');
       setTranscript(transcriptText);
       setSttResult(result);
       setActiveStep(4); // Move to AI Analysis step
       console.log('STT Result:', result);
+      console.log('STT Participants:', result.participants);
+      console.log('STT Participants length:', result.participants?.length || 0);
       
       // Initialize participants and assignments from STT result
       // This will be used when user moves to Step 5 (Split Assignment)
       if (result.participants && result.participants.length > 0 && ocrResult) {
-        const sttParticipants = result.participants.map(p => p.name);
+        // Normalize participant names to lowercase for consistency
+        const sttParticipants = result.participants.map(p => p.name.toLowerCase().trim());
         setParticipants(sttParticipants);
         
         // Initialize assignments from STT result
-        // Match STT items to OCR items by name similarity
+        // STT now returns exact OCR item names, so we can match directly
         const initialAssignments = {};
         result.participants.forEach(participant => {
           if (participant.items && participant.items.length > 0) {
             const assignedIndices = [];
             participant.items.forEach(sttItemName => {
-              // Find matching OCR item by name (case-insensitive, partial match)
+              // Find matching OCR item by exact name match (case-insensitive)
               const matchingIndex = ocrResult.items?.findIndex(ocrItem => 
-                ocrItem.name.toLowerCase().includes(sttItemName.toLowerCase()) ||
-                sttItemName.toLowerCase().includes(ocrItem.name.toLowerCase())
+                ocrItem.name.toLowerCase().trim() === sttItemName.toLowerCase().trim()
               );
               if (matchingIndex !== undefined && matchingIndex !== -1) {
                 assignedIndices.push(matchingIndex);
               }
             });
             if (assignedIndices.length > 0) {
-              initialAssignments[participant.name] = assignedIndices;
+              // Use lowercase for consistency
+              const participantKey = participant.name.toLowerCase().trim();
+              initialAssignments[participantKey] = assignedIndices;
             }
           }
         });
@@ -177,13 +349,30 @@ const NewExpense = () => {
     setError(null);
 
     try {
-      // Convert itemAssignments to participants format
+      // Convert itemAssignments to participants format with AA calculations
       // Format: { participantName: [itemIndex1, itemIndex2, ...] }
       // Convert to: [{ name: participantName, items: [itemName1, itemName2, ...] }]
+      // Note: itemAssignments keys are lowercase, so use lowercase lookup
       const participantsData = participants.map(participantName => {
-        const assignedItemIndices = itemAssignments[participantName] || [];
+        const participantKey = participantName.toLowerCase().trim();
+        const assignedItemIndices = itemAssignments[participantKey] || [];
         const assignedItemNames = assignedItemIndices
-          .map(idx => ocrResult.items[idx]?.name)
+          .map(idx => {
+            const item = ocrResult.items[idx];
+            if (!item) return null;
+            
+            // Count how many participants have this item assigned (use lowercase keys)
+            const assignedCount = participants.filter(p => {
+              const pKey = p.toLowerCase().trim();
+              return itemAssignments[pKey] && itemAssignments[pKey].includes(idx);
+            }).length;
+            
+            // For shared items, include the split info
+            if (assignedCount > 1) {
+              return `${item.name} (shared among ${assignedCount})`;
+            }
+            return item.name;
+          })
           .filter(Boolean);
         
         return {
@@ -249,6 +438,30 @@ const NewExpense = () => {
             selectedFile={selectedFile}
           />
 
+          {/* Contact Group Selection */}
+          {contactGroups.length > 0 && (
+            <div className="group-selection-section">
+              <h4>👥 Select Friend Group (Optional)</h4>
+              <p className="group-selection-hint">
+                Select a group to help AI better understand the bill split
+              </p>
+              <div className="group-select-container">
+                <select
+                  className="group-select"
+                  value={selectedGroupId || ''}
+                  onChange={(e) => setSelectedGroupId(e.target.value || null)}
+                >
+                  <option value="">No group selected</option>
+                  {contactGroups.map(group => (
+                    <option key={group.id} value={group.id}>
+                      {group.name} ({group.member_count} {group.member_count === 1 ? 'member' : 'members'})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
+
           {selectedFile && (
             <div className="process-section">
               <button
@@ -266,29 +479,116 @@ const NewExpense = () => {
       {/* Step 3: Voice Input (showing OCR result) */}
       {activeStep === 3 && (
         <div className="voice-input-section">
-          {/* Show OCR Result as Reference */}
+          {/* Show OCR Result - Editable */}
           {ocrResult && (
             <div className="ocr-result-reference">
-              <h3>📄 Receipt Details (Reference)</h3>
+              <h3>📄 Receipt Details (Click to Edit)</h3>
               <div className="receipt-info">
-                <p><strong>Store:</strong> {ocrResult.store_name || 'N/A'}</p>
-                <p><strong>Total:</strong> ${ocrResult.total?.toFixed(2) || 'N/A'}</p>
-                <p><strong>Subtotal:</strong> ${ocrResult.subtotal?.toFixed(2) || 'N/A'}</p>
+                <div className="editable-field">
+                  <label>Store:</label>
+                  <input
+                    type="text"
+                    value={ocrResult.store_name || ''}
+                    onChange={(e) => setOcrResult({ ...ocrResult, store_name: e.target.value })}
+                    className="editable-input"
+                  />
+                </div>
+                <div className="editable-field">
+                  <label>Total:</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={ocrResult.total || ''}
+                    onChange={(e) => setOcrResult({ ...ocrResult, total: parseFloat(e.target.value) || 0 })}
+                    className="editable-input"
+                  />
+                </div>
+                <div className="editable-field">
+                  <label>Subtotal:</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={ocrResult.subtotal || ''}
+                    onChange={(e) => setOcrResult({ ...ocrResult, subtotal: parseFloat(e.target.value) || null })}
+                    className="editable-input"
+                  />
+                </div>
                 {ocrResult.tax_amount && (
-                  <p><strong>Tax:</strong> ${ocrResult.tax_amount.toFixed(2)}</p>
+                  <div className="editable-field">
+                    <label>Tax:</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={ocrResult.tax_amount}
+                      onChange={(e) => setOcrResult({ ...ocrResult, tax_amount: parseFloat(e.target.value) || 0 })}
+                      className="editable-input"
+                    />
+                  </div>
                 )}
               </div>
               
               {ocrResult.items && ocrResult.items.length > 0 && (
                 <div className="items-list">
                   <h4>Items ({ocrResult.items.length}):</h4>
-                  <ul>
+                  <div className="editable-items">
                     {ocrResult.items.map((item, index) => (
-                      <li key={index}>
-                        {item.name} - ${item.price?.toFixed(2)} (Qty: {item.quantity || 1})
-                      </li>
+                      <div key={index} className="editable-item">
+                        <input
+                          type="text"
+                          value={item.name || ''}
+                          onChange={(e) => {
+                            const newItems = [...ocrResult.items];
+                            newItems[index] = { ...newItems[index], name: e.target.value };
+                            setOcrResult({ ...ocrResult, items: newItems });
+                          }}
+                          className="editable-input"
+                          placeholder="Item name"
+                        />
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={item.price || ''}
+                          onChange={(e) => {
+                            const newItems = [...ocrResult.items];
+                            newItems[index] = { ...newItems[index], price: parseFloat(e.target.value) || 0 };
+                            setOcrResult({ ...ocrResult, items: newItems });
+                          }}
+                          className="editable-input price-input"
+                          placeholder="Price"
+                        />
+                        <input
+                          type="number"
+                          step="1"
+                          value={item.quantity || 1}
+                          onChange={(e) => {
+                            const newItems = [...ocrResult.items];
+                            newItems[index] = { ...newItems[index], quantity: parseInt(e.target.value) || 1 };
+                            setOcrResult({ ...ocrResult, items: newItems });
+                          }}
+                          className="editable-input qty-input"
+                          placeholder="Qty"
+                        />
+                        <button
+                          className="remove-item-btn"
+                          onClick={() => {
+                            const newItems = ocrResult.items.filter((_, i) => i !== index);
+                            setOcrResult({ ...ocrResult, items: newItems });
+                          }}
+                        >
+                          ×
+                        </button>
+                      </div>
                     ))}
-                  </ul>
+                  </div>
+                  <button
+                    className="add-item-btn"
+                    onClick={() => {
+                      const newItems = [...ocrResult.items, { name: '', price: 0, quantity: 1 }];
+                      setOcrResult({ ...ocrResult, items: newItems });
+                    }}
+                  >
+                    + Add Item
+                  </button>
                 </div>
               )}
             </div>
@@ -419,11 +719,27 @@ const NewExpense = () => {
                 </div>
               )}
 
+              {/* Show STT Participants Preview */}
+              {sttResult?.participants && sttResult.participants.length > 0 && (
+                <div className="summary-section">
+                  <h4>👥 AI Detected Participants (will be used as presets)</h4>
+                  <div className="participants-preview">
+                    {sttResult.participants.map((p, idx) => (
+                      <div key={idx} className="participant-preview-item">
+                        <strong>{p.name}</strong>: {p.items?.join(', ') || 'No items specified'}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Continue Button */}
               <div className="complete-section">
                 <button
                   className="complete-button"
-                  onClick={() => setActiveStep(5)}
+                  onClick={() => {
+                    setActiveStep(5);
+                  }}
                   disabled={loading}
                 >
                   Continue to Split Assignment →
@@ -441,6 +757,45 @@ const NewExpense = () => {
           <p className="section-description">
             Select participants and assign items to each person. Items are initially unassigned unless detected from voice input.
           </p>
+
+          {/* Group Selection (if no group selected and no STT result) */}
+          {!selectedGroupId && !sttResult?.participants && contactGroups.length > 0 && (
+            <div className="group-selection-section">
+              <h4>👥 Select Friend Group (Optional)</h4>
+              <p className="group-selection-hint">
+                Quickly add all members from a group
+              </p>
+              <div className="group-select-container">
+                <select
+                  className="group-select"
+                  value=""
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      const group = contactGroups.find(g => g.id === e.target.value);
+                      if (group && group.members) {
+                        const groupMemberNames = group.members.map(m => 
+                          m.contact_nickname || m.contact_email.split('@')[0]
+                        );
+                        // Merge with existing participants, avoiding duplicates
+                        setParticipants(prev => {
+                          const combined = [...new Set([...prev, ...groupMemberNames])];
+                          return combined;
+                        });
+                        setSelectedGroupId(e.target.value);
+                      }
+                    }
+                  }}
+                >
+                  <option value="">Select a group to add members...</option>
+                  {contactGroups.map(group => (
+                    <option key={group.id} value={group.id}>
+                      {group.name} ({group.member_count} {group.member_count === 1 ? 'member' : 'members'})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
 
           {/* Add Participant */}
           <div className="add-participant-section">
@@ -487,9 +842,10 @@ const NewExpense = () => {
                         onClick={() => {
                           const newParticipants = participants.filter((_, i) => i !== pIdx);
                           setParticipants(newParticipants);
-                          // Remove assignments for this participant
+                          // Remove assignments for this participant (use lowercase key)
                           const newAssignments = { ...itemAssignments };
-                          delete newAssignments[participant];
+                          const participantKey = participant.toLowerCase().trim();
+                          delete newAssignments[participantKey];
                           setItemAssignments(newAssignments);
                         }}
                       >
@@ -498,17 +854,55 @@ const NewExpense = () => {
                     </div>
                     <div className="assigned-items">
                       <strong>Assigned Items:</strong>
-                      {itemAssignments[participant] && itemAssignments[participant].length > 0 ? (
-                        <ul>
-                          {itemAssignments[participant].map(itemIdx => (
-                            <li key={itemIdx}>
-                              {ocrResult.items[itemIdx]?.name} - ${ocrResult.items[itemIdx]?.price.toFixed(2)}
-                            </li>
-                          ))}
+                      {(() => {
+                        const participantKey = participant.toLowerCase().trim();
+                        const assignedIndices = itemAssignments[participantKey] || [];
+                        return assignedIndices.length > 0 ? (
+                          <ul>
+                            {assignedIndices.map(itemIdx => {
+                            const item = ocrResult.items[itemIdx];
+                            if (!item) return null;
+                            
+                            // Count how many participants have this item assigned (use lowercase keys)
+                            const assignedCount = participants.filter(p => {
+                              const pKey = p.toLowerCase().trim();
+                              return itemAssignments[pKey] && itemAssignments[pKey].includes(itemIdx);
+                            }).length;
+                            
+                            // Calculate amount per person (AA)
+                            const amountPerPerson = assignedCount > 0 ? (item.price || 0) / assignedCount : 0;
+                            
+                            return (
+                              <li key={itemIdx}>
+                                {item.name} - ${amountPerPerson.toFixed(2)}
+                                {assignedCount > 1 && (
+                                  <span className="aa-badge"> (shared with {assignedCount} people)</span>
+                                )}
+                              </li>
+                            );
+                          })}
                         </ul>
                       ) : (
                         <p className="no-items">No items assigned</p>
-                      )}
+                      );
+                      })()}
+                      {(() => {
+                        const participantKey = participant.toLowerCase().trim();
+                        const assignedIndices = itemAssignments[participantKey] || [];
+                        return assignedIndices.length > 0 && (
+                          <div className="participant-total">
+                            <strong>Total: ${(assignedIndices.reduce((sum, itemIdx) => {
+                              const item = ocrResult.items[itemIdx];
+                              if (!item) return sum;
+                              const assignedCount = participants.filter(p => {
+                                const pKey = p.toLowerCase().trim();
+                                return itemAssignments[pKey] && itemAssignments[pKey].includes(itemIdx);
+                              }).length;
+                              return sum + (assignedCount > 0 ? (item.price || 0) / assignedCount : 0);
+                            }, 0)).toFixed(2)}</strong>
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
                 ))}
@@ -522,16 +916,28 @@ const NewExpense = () => {
               <h4>Items ({ocrResult.items.length})</h4>
               <div className="items-list">
                 {ocrResult.items.map((item, itemIdx) => {
-                  // Find which participants have this item assigned
-                  const assignedTo = participants.filter(p => 
-                    itemAssignments[p] && itemAssignments[p].includes(itemIdx)
-                  );
+                  // Find which participants have this item assigned (use lowercase keys)
+                  const assignedTo = participants.filter(p => {
+                    const pKey = p.toLowerCase().trim();
+                    return itemAssignments[pKey] && itemAssignments[pKey].includes(itemIdx);
+                  });
+                  
+                  // Calculate amount per person if shared
+                  const assignedCount = assignedTo.length;
+                  const amountPerPerson = assignedCount > 0 ? (item.price || 0) / assignedCount : 0;
                   
                   return (
                     <div key={itemIdx} className="item-assignment-card">
                       <div className="item-info">
                         <span className="item-name">{item.name}</span>
-                        <span className="item-price">${item.price.toFixed(2)}</span>
+                        <div className="item-price-info">
+                          <span className="item-price">${item.price.toFixed(2)}</span>
+                          {assignedCount > 0 && (
+                            <span className="item-price-per-person">
+                              (${amountPerPerson.toFixed(2)} per person × {assignedCount})
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <div className="item-assignments">
                         <label>Assign to:</label>
@@ -539,33 +945,39 @@ const NewExpense = () => {
                           <p className="no-participants-hint">Add participants first to assign items</p>
                         ) : (
                           <div className="participant-checkboxes">
-                            {participants.map((participant) => (
-                              <label key={participant} className="checkbox-label">
-                                <input
-                                  type="checkbox"
-                                  checked={itemAssignments[participant]?.includes(itemIdx) || false}
-                                  onChange={(e) => {
-                                    const newAssignments = { ...itemAssignments };
-                                    if (!newAssignments[participant]) {
-                                      newAssignments[participant] = [];
-                                    }
-                                    if (e.target.checked) {
-                                      // Add item to participant
-                                      if (!newAssignments[participant].includes(itemIdx)) {
-                                        newAssignments[participant] = [...newAssignments[participant], itemIdx];
+                            {participants.map((participant) => {
+                              const participantKey = participant.toLowerCase().trim();
+                              return (
+                                <label key={participant} className="checkbox-label">
+                                  <input
+                                    type="checkbox"
+                                    checked={itemAssignments[participantKey]?.includes(itemIdx) || false}
+                                    onChange={(e) => {
+                                      const newAssignments = { ...itemAssignments };
+                                      if (!newAssignments[participantKey]) {
+                                        newAssignments[participantKey] = [];
                                       }
-                                    } else {
-                                      // Remove item from participant
-                                      newAssignments[participant] = newAssignments[participant].filter(
-                                        idx => idx !== itemIdx
-                                      );
-                                    }
-                                    setItemAssignments(newAssignments);
-                                  }}
-                                />
-                                {participant}
-                              </label>
-                            ))}
+                                      if (e.target.checked) {
+                                        // Add item to participant
+                                        if (!newAssignments[participantKey].includes(itemIdx)) {
+                                          newAssignments[participantKey] = [...newAssignments[participantKey], itemIdx];
+                                        }
+                                      } else {
+                                        // Remove item from participant
+                                        newAssignments[participantKey] = newAssignments[participantKey].filter(
+                                          idx => idx !== itemIdx
+                                        );
+                                      }
+                                      setItemAssignments(newAssignments);
+                                    }}
+                                  />
+                                  {participant}
+                                  {itemAssignments[participantKey]?.includes(itemIdx) && (
+                                    <span className="assigned-badge"> (${amountPerPerson.toFixed(2)})</span>
+                                  )}
+                                </label>
+                              );
+                            })}
                           </div>
                         )}
                       </div>

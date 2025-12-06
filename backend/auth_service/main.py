@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from database import get_db, init_db
-from models import User, EmailVerificationCode, PasswordResetCode, Expense, ExpenseItem, ExpenseParticipant, Group, GroupMember
+from models import User, EmailVerificationCode, PasswordResetCode, Expense, ExpenseItem, ExpenseParticipant, Group, GroupMember, Contact, ContactGroup, ContactGroupMember, ExpenseSplit
 from schemas import (
     RegisterRequest,
     LoginRequest,
@@ -20,10 +20,26 @@ from schemas import (
 )
 from expense_schemas import CreateExpenseRequest, ExpenseResponse, ExpenseListResponse, ExpenseItemSchema, ExpenseParticipantSchema
 from group_schemas import CreateGroupRequest, UpdateGroupRequest, GroupResponse, GroupListResponse, GroupMemberSchema
+from contact_schemas import AddContactRequest, UpdateContactRequest, ContactResponse, ContactListResponse
+from contact_group_schemas import (
+    CreateContactGroupRequest,
+    UpdateContactGroupRequest,
+    ContactGroupResponse,
+    ContactGroupListResponse,
+    ContactGroupMemberSchema
+)
+from split_schemas import (
+    CreateExpenseSplitRequest,
+    ExpenseSplitResponse,
+    ExpenseSplitListResponse,
+    SendBillRequest,
+    SendBillResponse
+)
 from auth import verify_password, get_password_hash, create_access_token, verify_token
-from email_service import send_verification_email, generate_verification_code
+from email_service import send_verification_email, send_split_bill_email, generate_verification_code
 import uuid as uuid_lib
 import json
+from decimal import Decimal
 
 app = FastAPI(title="SmartBill Auth Service", version="1.0.0")
 
@@ -81,7 +97,7 @@ async def send_verification_code(
     db.commit()
     
     # Send email
-    await send_verification_email(email, code, "注册")
+    await send_verification_email(email, code, "registration")
     
     return MessageResponse(message="Verification code sent to email")
 
@@ -202,7 +218,7 @@ async def send_password_reset_code(
     db.commit()
     
     # Send email
-    await send_verification_email(email, code, "重置密码")
+    await send_verification_email(email, code, "password_reset")
     
     return MessageResponse(message="If email exists, reset code sent")
 
@@ -582,6 +598,112 @@ async def delete_expense(
     db.commit()
     
     return MessageResponse(message="Expense deleted successfully")
+
+
+@app.get("/expenses/shared-with-me", response_model=ExpenseListResponse)
+async def get_shared_expenses(
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+    limit: int = 50,
+    offset: int = 0
+):
+    """
+    Get expenses where user is a participant (not creator)
+    Shows bills that others have split with this user
+    """
+    if not authorization:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authorization header missing"
+        )
+    
+    try:
+        scheme, token = authorization.split()
+        if scheme.lower() != "bearer":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid authentication scheme"
+            )
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authorization header format"
+        )
+    
+    payload = verify_token(token)
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token"
+        )
+    
+    user_id_str = payload.get("sub")
+    if not user_id_str:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User ID not found in token"
+        )
+    
+    try:
+        user_id = uuid_lib.UUID(user_id_str)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid user ID format"
+        )
+    
+    # Get user's contact to find their email
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    # Find all expense splits where this user is a participant
+    splits = db.query(ExpenseSplit).filter(
+        ExpenseSplit.participant_email == user.email
+    ).order_by(ExpenseSplit.created_at.desc()).limit(limit).offset(offset).all()
+    
+    # Get unique expense IDs
+    expense_ids = list(set([split.expense_id for split in splits]))
+    
+    # Get expenses (but not created by this user)
+    expenses = db.query(Expense).filter(
+        Expense.id.in_(expense_ids),
+        Expense.user_id != user_id
+    ).all()
+    
+    expense_responses = []
+    for expense in expenses:
+        items = db.query(ExpenseItem).filter(ExpenseItem.expense_id == expense.id).all()
+        participants = db.query(ExpenseParticipant).filter(ExpenseParticipant.expense_id == expense.id).all()
+        
+        expense_responses.append(ExpenseResponse(
+            id=str(expense.id),
+            user_id=str(expense.user_id),
+            store_name=expense.store_name,
+            total_amount=float(expense.total_amount),
+            subtotal=float(expense.subtotal) if expense.subtotal else None,
+            tax_amount=float(expense.tax_amount) if expense.tax_amount else None,
+            tax_rate=float(expense.tax_rate) if expense.tax_rate else None,
+            raw_text=expense.raw_text,
+            transcript=expense.transcript,
+            items=[
+                ExpenseItemSchema(name=item.name, price=float(item.price), quantity=int(item.quantity))
+                for item in items
+            ],
+            participants=[
+                ExpenseParticipantSchema(
+                    name=p.name,
+                    items=json.loads(p.items) if p.items else []
+                )
+                for p in participants
+            ],
+            created_at=expense.created_at
+        ))
+    
+    return ExpenseListResponse(expenses=expense_responses, total=len(expense_responses))
 
 
 # ==================== Group Routes ====================
@@ -997,6 +1119,1074 @@ async def delete_group(
     db.commit()
     
     return MessageResponse(message="Group deleted successfully")
+
+
+# ==================== Contact/Friend Management Routes ====================
+
+@app.post("/contacts", response_model=ContactResponse)
+async def add_contact(
+    request: AddContactRequest,
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+):
+    """
+    Add a friend to contacts (must be a registered user)
+    """
+    if not authorization:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authorization header missing"
+        )
+    
+    try:
+        scheme, token = authorization.split()
+        if scheme.lower() != "bearer":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid authentication scheme"
+            )
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authorization header format"
+        )
+    
+    payload = verify_token(token)
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token"
+        )
+    
+    user_id_str = payload.get("sub")
+    try:
+        user_id = uuid_lib.UUID(user_id_str)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid user ID format"
+        )
+    
+    # Find friend by email
+    friend = db.query(User).filter(User.email == request.friend_email.lower()).first()
+    if not friend:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User with this email is not registered"
+        )
+    
+    # Check if trying to add self
+    if friend.id == user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot add yourself as a contact"
+        )
+    
+    # Check if already in contacts
+    existing = db.query(Contact).filter(
+        Contact.user_id == user_id,
+        Contact.friend_user_id == friend.id
+    ).first()
+    
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This user is already in your contacts"
+        )
+    
+    # Create contact (A -> B)
+    contact = Contact(
+        user_id=user_id,
+        friend_user_id=friend.id,
+        nickname=request.nickname
+    )
+    db.add(contact)
+    
+    # Auto-create reverse contact (B -> A) if not exists
+    # B's nickname for A should be default (email username)
+    reverse_existing = db.query(Contact).filter(
+        Contact.user_id == friend.id,
+        Contact.friend_user_id == user_id
+    ).first()
+    
+    if not reverse_existing:
+        # Default nickname is email username (before @)
+        default_nickname = user.email.split('@')[0]
+        reverse_contact = Contact(
+            user_id=friend.id,
+            friend_user_id=user_id,
+            nickname=default_nickname
+        )
+        db.add(reverse_contact)
+    
+    db.commit()
+    db.refresh(contact)
+    
+    return ContactResponse(
+        id=str(contact.id),
+        user_id=str(contact.user_id),
+        friend_user_id=str(contact.friend_user_id),
+        friend_email=friend.email,
+        nickname=contact.nickname,
+        created_at=contact.created_at
+    )
+
+
+@app.get("/contacts", response_model=ContactListResponse)
+async def get_contacts(
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+):
+    """
+    Get user's contact list
+    """
+    if not authorization:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authorization header missing"
+        )
+    
+    try:
+        scheme, token = authorization.split()
+        if scheme.lower() != "bearer":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid authentication scheme"
+            )
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authorization header format"
+        )
+    
+    payload = verify_token(token)
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token"
+        )
+    
+    user_id_str = payload.get("sub")
+    try:
+        user_id = uuid_lib.UUID(user_id_str)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid user ID format"
+        )
+    
+    # Get contacts with friend info
+    contacts = db.query(Contact).filter(Contact.user_id == user_id).all()
+    
+    contact_responses = []
+    for contact in contacts:
+        friend = db.query(User).filter(User.id == contact.friend_user_id).first()
+        if friend:
+            contact_responses.append(ContactResponse(
+                id=str(contact.id),
+                user_id=str(contact.user_id),
+                friend_user_id=str(contact.friend_user_id),
+                friend_email=friend.email,
+                nickname=contact.nickname,
+                created_at=contact.created_at
+            ))
+    
+    return ContactListResponse(contacts=contact_responses, total=len(contact_responses))
+
+
+@app.put("/contacts/{contact_id}", response_model=ContactResponse)
+async def update_contact(
+    contact_id: str,
+    request: UpdateContactRequest,
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+):
+    """
+    Update a contact's nickname
+    """
+    if not authorization:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authorization header missing"
+        )
+    
+    try:
+        scheme, token = authorization.split()
+        if scheme.lower() != "bearer":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid authentication scheme"
+            )
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authorization header format"
+        )
+    
+    payload = verify_token(token)
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token"
+        )
+    
+    user_id_str = payload.get("sub")
+    try:
+        user_id = uuid_lib.UUID(user_id_str)
+        contact_uuid = uuid_lib.UUID(contact_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid ID format"
+        )
+    
+    # Verify contact ownership
+    contact = db.query(Contact).filter(
+        Contact.id == contact_uuid,
+        Contact.user_id == user_id
+    ).first()
+    
+    if not contact:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Contact not found"
+        )
+    
+    # Update nickname only (nickname can be empty string to reset to default)
+    if request.nickname is not None:
+        contact.nickname = request.nickname if request.nickname else None
+    
+    db.commit()
+    db.refresh(contact)
+    
+    # Get friend user info
+    friend = db.query(User).filter(User.id == contact.friend_user_id).first()
+    
+    return ContactResponse(
+        id=str(contact.id),
+        user_id=str(contact.user_id),
+        friend_user_id=str(contact.friend_user_id),
+        friend_email=friend.email,
+        nickname=contact.nickname,
+        created_at=contact.created_at
+    )
+
+
+@app.delete("/contacts/{contact_id}", response_model=MessageResponse)
+async def delete_contact(
+    contact_id: str,
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+):
+    """
+    Delete a contact
+    """
+    if not authorization:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authorization header missing"
+        )
+    
+    try:
+        scheme, token = authorization.split()
+        if scheme.lower() != "bearer":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid authentication scheme"
+            )
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authorization header format"
+        )
+    
+    payload = verify_token(token)
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token"
+        )
+    
+    user_id_str = payload.get("sub")
+    try:
+        user_id = uuid_lib.UUID(user_id_str)
+        contact_uuid = uuid_lib.UUID(contact_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid ID format"
+        )
+    
+    # Find contact and verify ownership
+    contact = db.query(Contact).filter(
+        Contact.id == contact_uuid,
+        Contact.user_id == user_id
+    ).first()
+    
+    if not contact:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Contact not found"
+        )
+    
+    db.delete(contact)
+    db.commit()
+    
+    return MessageResponse(message="Contact deleted successfully")
+
+
+# ==================== Contact Group Routes ====================
+
+@app.post("/contact-groups", response_model=ContactGroupResponse)
+async def create_contact_group(
+    request: CreateContactGroupRequest,
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+):
+    """
+    Create a new contact group
+    """
+    if not authorization:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authorization header missing"
+        )
+    
+    try:
+        scheme, token = authorization.split()
+        if scheme.lower() != "bearer":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid authentication scheme"
+            )
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authorization header format"
+        )
+    
+    payload = verify_token(token)
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token"
+        )
+    
+    user_id_str = payload.get("sub")
+    try:
+        user_id = uuid_lib.UUID(user_id_str)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid user ID format"
+        )
+    
+    # Verify all contact IDs belong to the user
+    if request.contact_ids:
+        contacts = db.query(Contact).filter(
+            Contact.id.in_([uuid_lib.UUID(str(cid)) for cid in request.contact_ids]),
+            Contact.user_id == user_id
+        ).all()
+        if len(contacts) != len(request.contact_ids):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="One or more contacts not found or not owned by user"
+            )
+    
+    # Create group
+    group = ContactGroup(
+        user_id=user_id,
+        name=request.name,
+        description=request.description
+    )
+    db.add(group)
+    db.flush()
+    
+    # Add members
+    for contact_id in request.contact_ids:
+        member = ContactGroupMember(
+            group_id=group.id,
+            contact_id=uuid_lib.UUID(str(contact_id))
+        )
+        db.add(member)
+    
+    db.commit()
+    db.refresh(group)
+    
+    # Get creator (user who created the group)
+    creator = db.query(User).filter(User.id == group.user_id).first()
+    
+    # Build response - always include creator first
+    members = []
+    if creator:
+        members.append(ContactGroupMemberSchema(
+            contact_id=None,
+            user_id=creator.id,
+            contact_email=creator.email,
+            contact_nickname=None,
+            is_creator=True
+        ))
+    
+    # Add other members (contacts)
+    members_query = db.query(ContactGroupMember, Contact, User).join(
+        Contact, ContactGroupMember.contact_id == Contact.id
+    ).join(
+        User, Contact.friend_user_id == User.id
+    ).filter(ContactGroupMember.group_id == group.id).all()
+    
+    for member, contact, friend_user in members_query:
+        members.append(ContactGroupMemberSchema(
+            contact_id=contact.id,
+            user_id=friend_user.id,
+            contact_email=friend_user.email,
+            contact_nickname=contact.nickname,
+            is_creator=False
+        ))
+    
+    return ContactGroupResponse(
+        id=group.id,
+        user_id=group.user_id,
+        name=group.name,
+        description=group.description,
+        members=members,
+        member_count=len(members),
+        created_at=group.created_at,
+        updated_at=group.updated_at
+    )
+
+
+@app.get("/contact-groups", response_model=ContactGroupListResponse)
+async def get_contact_groups(
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+):
+    """
+    Get user's contact groups
+    """
+    if not authorization:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authorization header missing"
+        )
+    
+    try:
+        scheme, token = authorization.split()
+        if scheme.lower() != "bearer":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid authentication scheme"
+            )
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authorization header format"
+        )
+    
+    payload = verify_token(token)
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token"
+        )
+    
+    user_id_str = payload.get("sub")
+    try:
+        user_id = uuid_lib.UUID(user_id_str)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid user ID format"
+        )
+    
+    # Get ALL groups (shared across all users)
+    groups = db.query(ContactGroup).order_by(ContactGroup.created_at.desc()).all()
+    
+    group_responses = []
+    for group in groups:
+        # Get creator (user who created the group)
+        creator = db.query(User).filter(User.id == group.user_id).first()
+        
+        # Build members list - always include creator first
+        members = []
+        if creator:
+            members.append(ContactGroupMemberSchema(
+                contact_id=None,
+                user_id=creator.id,
+                contact_email=creator.email,
+                contact_nickname=None,
+                is_creator=True
+            ))
+        
+        # Add other members (contacts)
+        members_query = db.query(ContactGroupMember, Contact, User).join(
+            Contact, ContactGroupMember.contact_id == Contact.id
+        ).join(
+            User, Contact.friend_user_id == User.id
+        ).filter(ContactGroupMember.group_id == group.id).all()
+        
+        for member, contact, friend_user in members_query:
+            members.append(ContactGroupMemberSchema(
+                contact_id=contact.id,
+                user_id=friend_user.id,
+                contact_email=friend_user.email,
+                contact_nickname=contact.nickname,
+                is_creator=False
+            ))
+        
+        group_responses.append(ContactGroupResponse(
+            id=group.id,
+            user_id=group.user_id,
+            name=group.name,
+            description=group.description,
+            members=members,
+            member_count=len(members),
+            created_at=group.created_at,
+            updated_at=group.updated_at
+        ))
+    
+    return ContactGroupListResponse(groups=group_responses, total=len(group_responses))
+
+
+@app.put("/contact-groups/{group_id}", response_model=ContactGroupResponse)
+async def update_contact_group(
+    group_id: str,
+    request: UpdateContactGroupRequest,
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+):
+    """
+    Update a contact group
+    """
+    if not authorization:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authorization header missing"
+        )
+    
+    try:
+        scheme, token = authorization.split()
+        if scheme.lower() != "bearer":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid authentication scheme"
+            )
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authorization header format"
+        )
+    
+    payload = verify_token(token)
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token"
+        )
+    
+    user_id_str = payload.get("sub")
+    try:
+        user_id = uuid_lib.UUID(user_id_str)
+        group_uuid = uuid_lib.UUID(group_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid ID format"
+        )
+    
+    # Find group (all users can view, but only creator can update)
+    group = db.query(ContactGroup).filter(
+        ContactGroup.id == group_uuid
+    ).first()
+    
+    if not group:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Group not found"
+        )
+    
+    # Only creator can update
+    if group.user_id != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only group creator can update this group"
+        )
+    
+    # Update group fields
+    if request.name is not None:
+        group.name = request.name
+    if request.description is not None:
+        group.description = request.description
+    
+    # Update members if provided
+    if request.contact_ids is not None:
+        # Verify all contact IDs belong to the user
+        if request.contact_ids:
+            contacts = db.query(Contact).filter(
+                Contact.id.in_([uuid_lib.UUID(str(cid)) for cid in request.contact_ids]),
+                Contact.user_id == user_id
+            ).all()
+            if len(contacts) != len(request.contact_ids):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="One or more contacts not found or not owned by user"
+                )
+        
+        # Delete existing members (only non-creator members)
+        db.query(ContactGroupMember).filter(ContactGroupMember.group_id == group.id).delete()
+        
+        # Add new members (creator is automatically included, not in contact_ids)
+        for contact_id in request.contact_ids:
+            if contact_id:  # Ensure contact_id is not None or empty
+                member = ContactGroupMember(
+                    group_id=group.id,
+                    contact_id=uuid_lib.UUID(str(contact_id))
+                )
+                db.add(member)
+    
+    db.commit()
+    db.refresh(group)
+    
+    # Get creator (user who created the group)
+    creator = db.query(User).filter(User.id == group.user_id).first()
+    
+    # Build response - always include creator first
+    members = []
+    if creator:
+        members.append(ContactGroupMemberSchema(
+            contact_id=None,
+            user_id=creator.id,
+            contact_email=creator.email,
+            contact_nickname=None,
+            is_creator=True
+        ))
+    
+    # Add other members (contacts)
+    members_query = db.query(ContactGroupMember, Contact, User).join(
+        Contact, ContactGroupMember.contact_id == Contact.id
+    ).join(
+        User, Contact.friend_user_id == User.id
+    ).filter(ContactGroupMember.group_id == group.id).all()
+    
+    for member, contact, friend_user in members_query:
+        members.append(ContactGroupMemberSchema(
+            contact_id=contact.id,
+            user_id=friend_user.id,
+            contact_email=friend_user.email,
+            contact_nickname=contact.nickname,
+            is_creator=False
+        ))
+    
+    return ContactGroupResponse(
+        id=group.id,
+        user_id=group.user_id,
+        name=group.name,
+        description=group.description,
+        members=members,
+        member_count=len(members),
+        created_at=group.created_at,
+        updated_at=group.updated_at
+    )
+
+
+@app.delete("/contact-groups/{group_id}", response_model=MessageResponse)
+async def delete_contact_group(
+    group_id: str,
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+):
+    """
+    Delete a contact group
+    """
+    if not authorization:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authorization header missing"
+        )
+    
+    try:
+        scheme, token = authorization.split()
+        if scheme.lower() != "bearer":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid authentication scheme"
+            )
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authorization header format"
+        )
+    
+    payload = verify_token(token)
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token"
+        )
+    
+    user_id_str = payload.get("sub")
+    try:
+        user_id = uuid_lib.UUID(user_id_str)
+        group_uuid = uuid_lib.UUID(group_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid ID format"
+        )
+    
+    # Find group (all users can view, but only creator can delete)
+    group = db.query(ContactGroup).filter(
+        ContactGroup.id == group_uuid
+    ).first()
+    
+    if not group:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Group not found"
+        )
+    
+    # Only creator can delete
+    if group.user_id != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only group creator can delete this group"
+        )
+    
+    # Delete group (cascade will delete members)
+    db.delete(group)
+    db.commit()
+    
+    return MessageResponse(message="Group deleted successfully")
+
+
+# ==================== Expense Split Routes ====================
+
+@app.post("/expenses/{expense_id}/splits", response_model=MessageResponse)
+async def create_expense_splits(
+    expense_id: str,
+    request: CreateExpenseSplitRequest,
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+):
+    """
+    Create expense splits for an expense
+    """
+    if not authorization:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authorization header missing"
+        )
+    
+    try:
+        scheme, token = authorization.split()
+        if scheme.lower() != "bearer":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid authentication scheme"
+            )
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authorization header format"
+        )
+    
+    payload = verify_token(token)
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token"
+        )
+    
+    user_id_str = payload.get("sub")
+    try:
+        user_id = uuid_lib.UUID(user_id_str)
+        expense_uuid = uuid_lib.UUID(expense_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid ID format"
+        )
+    
+    # Verify expense ownership
+    expense = db.query(Expense).filter(
+        Expense.id == expense_uuid,
+        Expense.user_id == user_id
+    ).first()
+    
+    if not expense:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Expense not found"
+        )
+    
+    # Create splits
+    for participant in request.participants:
+        # If contact_id provided, get email
+        participant_email = participant.email
+        contact_id = None
+        
+        if participant.contact_id:
+            try:
+                contact_uuid = uuid_lib.UUID(participant.contact_id)
+                contact = db.query(Contact).filter(
+                    Contact.id == contact_uuid,
+                    Contact.user_id == user_id
+                ).first()
+                if contact:
+                    friend = db.query(User).filter(User.id == contact.friend_user_id).first()
+                    if friend:
+                        participant_email = friend.email
+                        contact_id = contact_uuid
+            except (ValueError, TypeError):
+                pass
+        
+        split = ExpenseSplit(
+            expense_id=expense_uuid,
+            participant_name=participant.name,
+            participant_email=participant_email,
+            contact_id=contact_id,
+            amount_owed=Decimal(str(participant.amount_owed)),
+            items_detail=json.dumps(participant.items_detail) if participant.items_detail else None
+        )
+        db.add(split)
+    
+    db.commit()
+    
+    return MessageResponse(message="Expense splits created successfully")
+
+
+@app.get("/expenses/{expense_id}/splits", response_model=ExpenseSplitListResponse)
+async def get_expense_splits(
+    expense_id: str,
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+):
+    """
+    Get expense splits for an expense
+    """
+    if not authorization:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authorization header missing"
+        )
+    
+    try:
+        scheme, token = authorization.split()
+        if scheme.lower() != "bearer":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid authentication scheme"
+            )
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authorization header format"
+        )
+    
+    payload = verify_token(token)
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token"
+        )
+    
+    user_id_str = payload.get("sub")
+    try:
+        user_id = uuid_lib.UUID(user_id_str)
+        expense_uuid = uuid_lib.UUID(expense_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid ID format"
+        )
+    
+    # Verify expense ownership
+    expense = db.query(Expense).filter(
+        Expense.id == expense_uuid,
+        Expense.user_id == user_id
+    ).first()
+    
+    if not expense:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Expense not found"
+        )
+    
+    # Get splits
+    splits = db.query(ExpenseSplit).filter(ExpenseSplit.expense_id == expense_uuid).all()
+    
+    split_responses = []
+    for split in splits:
+        split_responses.append(ExpenseSplitResponse(
+            id=str(split.id),
+            expense_id=str(split.expense_id),
+            participant_name=split.participant_name,
+            participant_email=split.participant_email,
+            contact_id=str(split.contact_id) if split.contact_id else None,
+            amount_owed=float(split.amount_owed),
+            items_detail=split.items_detail,
+            is_paid=split.is_paid,
+            email_sent=split.email_sent,
+            email_sent_at=split.email_sent_at,
+            created_at=split.created_at
+        ))
+    
+    return ExpenseSplitListResponse(splits=split_responses, total=len(split_responses))
+
+
+@app.post("/expenses/{expense_id}/send-bills", response_model=SendBillResponse)
+async def send_bills_to_participants(
+    expense_id: str,
+    request: SendBillRequest,
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+):
+    """
+    Send bill emails to selected participants
+    """
+    if not authorization:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authorization header missing"
+        )
+    
+    try:
+        scheme, token = authorization.split()
+        if scheme.lower() != "bearer":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid authentication scheme"
+            )
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authorization header format"
+        )
+    
+    payload = verify_token(token)
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token"
+        )
+    
+    user_id_str = payload.get("sub")
+    try:
+        user_id = uuid_lib.UUID(user_id_str)
+        expense_uuid = uuid_lib.UUID(expense_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid ID format"
+        )
+    
+    # Verify expense ownership
+    expense = db.query(Expense).filter(
+        Expense.id == expense_uuid,
+        Expense.user_id == user_id
+    ).first()
+    
+    if not expense:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Expense not found"
+        )
+    
+    # Get payer (user) info
+    payer = db.query(User).filter(User.id == user_id).first()
+    payer_name = payer.email.split('@')[0] if payer else "Your friend"
+    
+    # Prepare expense data
+    expense_data = {
+        'store_name': expense.store_name or "Unknown",
+        'total': float(expense.total_amount),
+        'date': expense.created_at.strftime("%B %d, %Y") if expense.created_at else "Recent"
+    }
+    
+    sent_count = 0
+    failed_count = 0
+    results = []
+    
+    # Send emails to selected participants
+    for split_id_str in request.participant_ids:
+        try:
+            split_id = uuid_lib.UUID(split_id_str)
+            split = db.query(ExpenseSplit).filter(
+                ExpenseSplit.id == split_id,
+                ExpenseSplit.expense_id == expense_uuid
+            ).first()
+            
+            if not split:
+                results.append({
+                    "participant_id": split_id_str,
+                    "participant_name": "Unknown",
+                    "status": "failed",
+                    "message": "Split not found"
+                })
+                failed_count += 1
+                continue
+            
+            if not split.participant_email:
+                results.append({
+                    "participant_id": split_id_str,
+                    "participant_name": split.participant_name,
+                    "status": "failed",
+                    "message": "No email address"
+                })
+                failed_count += 1
+                continue
+            
+            # Prepare split data
+            items_detail = json.loads(split.items_detail) if split.items_detail else []
+            split_data = {
+                'amount_owed': float(split.amount_owed),
+                'items_detail': items_detail
+            }
+            
+            # Send email
+            success = await send_split_bill_email(
+                to_email=split.participant_email,
+                to_name=split.participant_name,
+                payer_name=payer_name,
+                expense_data=expense_data,
+                split_data=split_data
+            )
+            
+            if success:
+                # Update split record
+                split.email_sent = True
+                split.email_sent_at = datetime.utcnow()
+                sent_count += 1
+                results.append({
+                    "participant_id": split_id_str,
+                    "participant_name": split.participant_name,
+                    "status": "sent",
+                    "message": f"Email sent to {split.participant_email}"
+                })
+            else:
+                failed_count += 1
+                results.append({
+                    "participant_id": split_id_str,
+                    "participant_name": split.participant_name,
+                    "status": "failed",
+                    "message": "Failed to send email"
+                })
+        
+        except Exception as e:
+            failed_count += 1
+            results.append({
+                "participant_id": split_id_str,
+                "participant_name": "Unknown",
+                "status": "error",
+                "message": str(e)
+            })
+    
+    db.commit()
+    
+    return SendBillResponse(
+        sent_count=sent_count,
+        failed_count=failed_count,
+        results=results
+    )
 
 
 if __name__ == "__main__":

@@ -1,22 +1,53 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import StatCard from '../components/StatCard';
 import SearchBar from '../components/SearchBar';
 import EmptyState from '../components/EmptyState';
-import { Receipt, DollarSign, Users, Filter } from 'lucide-react';
+import { Receipt, DollarSign, Users, Filter, Eye } from 'lucide-react';
+import { expenseAPI } from '../services/api';
 import './History.css';
 
 const History = () => {
+  const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  
-  // 模拟费用数据（目前为空）
   const [expenses, setExpenses] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    loadExpenses();
+  }, []);
+
+  const loadExpenses = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const response = await expenseAPI.getExpenses(100, 0);
+      setExpenses(response.expenses || []);
+    } catch (err) {
+      setError(err.message || 'Failed to load expenses');
+      console.error('Failed to load expenses:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Filter expenses based on search term
+  const filteredExpenses = expenses.filter(expense => {
+    const matchesSearch = !searchTerm || 
+      expense.store_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      expense.transcript?.toLowerCase().includes(searchTerm.toLowerCase());
+    
+    // Note: statusFilter would need expense status field in the data model
+    return matchesSearch;
+  });
 
   // 统计数据
   const stats = {
     totalExpenses: expenses.length,
-    totalAmount: expenses.reduce((sum, exp) => sum + exp.amount, 0),
-    uniqueParticipants: new Set(expenses.flatMap(exp => exp.participants)).size
+    totalAmount: expenses.reduce((sum, exp) => sum + (exp.total_amount || 0), 0),
+    uniqueParticipants: new Set(expenses.flatMap(exp => (exp.participants || []).map(p => p.name))).size
   };
 
   const handleSearch = (value) => {
@@ -87,15 +118,65 @@ const History = () => {
 
       {/* 费用列表 / 空状态 */}
       <div className="expenses-container">
-        {expenses.length === 0 ? (
+        {loading ? (
+          <div className="loading-state">
+            <p>Loading expenses...</p>
+          </div>
+        ) : error ? (
+          <div className="error-state">
+            <p>{error}</p>
+            <button onClick={loadExpenses} className="retry-btn">Retry</button>
+          </div>
+        ) : filteredExpenses.length === 0 ? (
           <EmptyState
             icon={Receipt}
             title="No expenses found"
-            description="Create your first expense to get started"
+            description={searchTerm ? "Try adjusting your search terms" : "Create your first expense to get started"}
           />
         ) : (
           <div className="expenses-list">
-            {/* 这里将来会显示费用列表 */}
+            {filteredExpenses.map((expense) => (
+              <div 
+                key={expense.id} 
+                className="expense-card"
+                onClick={() => navigate(`/expense/${expense.id}`)}
+              >
+                <div className="expense-card-header">
+                  <div className="expense-store">{expense.store_name || 'Unknown Store'}</div>
+                  <div className="expense-amount">${expense.total_amount?.toFixed(2) || '0.00'}</div>
+                </div>
+                <div className="expense-card-details">
+                  <div className="expense-date">
+                    {new Date(expense.created_at).toLocaleDateString()}
+                  </div>
+                  {expense.items && expense.items.length > 0 && (
+                    <div className="expense-items-count">
+                      {expense.items.length} items
+                    </div>
+                  )}
+                  {expense.participants && expense.participants.length > 0 && (
+                    <div className="expense-participants">
+                      {expense.participants.length} participant{expense.participants.length > 1 ? 's' : ''}
+                    </div>
+                  )}
+                </div>
+                {expense.transcript && (
+                  <div className="expense-transcript">
+                    💬 {expense.transcript.substring(0, 100)}{expense.transcript.length > 100 ? '...' : ''}
+                  </div>
+                )}
+                <button 
+                  className="view-expense-btn"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    navigate(`/expense/${expense.id}`);
+                  }}
+                >
+                  <Eye size={16} />
+                  View Details
+                </button>
+              </div>
+            ))}
           </div>
         )}
       </div>

@@ -8,6 +8,7 @@ import History from './pages/History';
 import Settings from './pages/Settings';
 import Login from './pages/Login';
 import Register from './pages/Register';
+import ExpenseDetail from './pages/ExpenseDetail';
 import ProtectedRoute from './components/ProtectedRoute';
 import authService from './services/authService';
 import './style.css';
@@ -101,6 +102,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <Settings />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/expense/:id"
+            element={
+              <ProtectedRoute>
+                <ExpenseDetail />
               </ProtectedRoute>
             }
           />
