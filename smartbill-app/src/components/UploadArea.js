@@ -1,39 +1,33 @@
+// UploadArea.js
 import React from 'react';
 import { Upload } from 'lucide-react';
-import './UploadArea.css';
 
 const UploadArea = ({ onFileSelect, selectedFile }) => (
-  <div className="upload-container">
-    <div className="upload-content">
-      <div className="upload-icon-wrapper">
-        <Upload className="upload-icon" size={32} />
+  <div className="bg-white rounded-xl border-2 border-dashed border-gray-300 p-16">
+    <div className="flex flex-col items-center text-center">
+      <div className="w-16 h-16 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center mb-6">
+        <Upload size={32} />
       </div>
-      
-      <h3 className="upload-title">
-        Upload Your Bill
-      </h3>
-      
-      <p className="upload-description">
-        Take a photo or upload an image of your receipt
-      </p>
 
-      <label className="upload-button-wrapper">
+      <h3 className="text-xl font-semibold text-gray-900 mb-2">Upload Your Bill</h3>
+
+      <p className="text-base text-gray-500 mb-8">Take a photo or upload an image of your receipt</p>
+
+      <label className="cursor-pointer">
         <input
           type="file"
-          className="upload-input"
+          className="hidden"
           accept="image/*"
           onChange={onFileSelect}
         />
-        <div className="upload-button">
+        <div className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition flex items-center gap-2 text-base">
           <Upload size={20} />
           Choose Image
         </div>
       </label>
 
       {selectedFile && (
-        <p className="upload-filename">
-          Selected: {selectedFile.name}
-        </p>
+        <p className="text-sm text-gray-500 mt-4">Selected: {selectedFile.name}</p>
       )}
     </div>
   </div>

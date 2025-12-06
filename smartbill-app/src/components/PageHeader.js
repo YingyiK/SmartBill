@@ -1,10 +1,10 @@
+// PageHeader.js
 import React from 'react';
-import './PageHeader.css';
 
 const PageHeader = ({ title, subtitle }) => (
-  <div className="page-header">
-    <h2 className="page-title">{title}</h2>
-    <p className="page-subtitle">{subtitle}</p>
+  <div className="mb-8">
+    <h2 className="text-3xl font-bold text-gray-900 mb-2">{title}</h2>
+    <p className="text-base text-gray-500">{subtitle}</p>
   </div>
 );
 

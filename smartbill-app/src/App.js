@@ -16,27 +16,14 @@ import './style.css';
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(authService.isAuthenticated());
 
-  // Check authentication status on mount and when route changes
   useEffect(() => {
-    const checkAuth = () => {
-      setIsAuthenticated(authService.isAuthenticated());
-    };
-    
-    // Check on mount
+    const checkAuth = () => setIsAuthenticated(authService.isAuthenticated());
     checkAuth();
-    
-    // Check periodically (every 5 seconds) to catch login/logout
     const interval = setInterval(checkAuth, 5000);
-    
-    // Listen for storage changes (when token is set/removed)
-    const handleStorageChange = () => {
-      checkAuth();
-    };
-    window.addEventListener('storage', handleStorageChange);
-    
+    window.addEventListener('storage', checkAuth);
     return () => {
       clearInterval(interval);
-      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('storage', checkAuth);
     };
   }, []);
 
@@ -44,24 +31,23 @@ function App() {
     <Router>
       <div className="app">
         {isAuthenticated && <Sidebar />}
-        
         <Routes>
           {/* 公开路由 */}
-          <Route 
-            path="/login" 
-            element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <Login onLogin={() => setIsAuthenticated(true)} />} 
+          <Route
+            path="/login"
+            element={isAuthenticated ? <Navigate to="/new-expense" replace /> : <Login onLogin={() => setIsAuthenticated(true)} />}
           />
-          <Route 
-            path="/register" 
-            element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <Register onRegister={() => setIsAuthenticated(true)} />} 
+          <Route
+            path="/register"
+            element={isAuthenticated ? <Navigate to="/new-expense" replace /> : <Register onRegister={() => setIsAuthenticated(true)} />}
           />
-          
-          {/* 受保护的路由 */}
+
+          {/* 受保护路由 */}
           <Route
             path="/"
             element={
               <ProtectedRoute>
-                <Navigate to="/dashboard" replace />
+                <Navigate to="/new-expense" replace />
               </ProtectedRoute>
             }
           />

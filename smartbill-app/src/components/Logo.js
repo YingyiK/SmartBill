@@ -1,15 +1,14 @@
 import React from 'react';
-import './Logo.css';
 
 const Logo = () => (
-  <div className="logo-container">
-    <div className="logo-content">
-      <div className="logo-icon">
-        <span className="logo-letter">S</span>
+  <div className="p-6 border-b border-gray-200">
+    <div className="flex items-center gap-3">
+      <div className="w-10 h-10 rounded-lg bg-blue-500 flex items-center justify-center">
+        <span className="text-white font-bold text-lg">S</span>
       </div>
-      <div className="logo-text">
-        <h1 className="logo-title">SmartBill</h1>
-        <p className="logo-subtitle">AI Expense Splitting</p>
+      <div>
+        <h1 className="font-bold text-lg text-gray-900">SmartBill</h1>
+        <p className="text-xs text-gray-500">AI Expense Splitting</p>
       </div>
     </div>
   </div>

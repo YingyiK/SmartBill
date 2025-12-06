@@ -1,22 +1,26 @@
 import React from 'react';
-import './StatCard.css';
 
-const StatCard = ({ icon: Icon, iconColor, iconBgColor, label, value }) => {
+const Step = ({ step, activeStep }) => {
+  const circleClass =
+    step.number === activeStep
+      ? 'bg-blue-600 text-white'
+      : step.number < activeStep
+      ? 'bg-blue-100 text-blue-600'
+      : 'bg-gray-200 text-gray-400';
+
+  const labelClass =
+    step.number === activeStep ? 'text-gray-900 font-medium' : 'text-gray-500';
+
   return (
-    <div className="stat-card">
-      <div 
-        className="stat-icon-container"
-        style={{ backgroundColor: iconBgColor }}
+    <div className="flex flex-col items-center">
+      <div
+        className={`w-12 h-12 rounded-full flex items-center justify-center font-semibold mb-2 transition ${circleClass}`}
       >
-        <Icon size={24} style={{ color: iconColor }} />
+        {step.number}
       </div>
-      
-      <div className="stat-content">
-        <p className="stat-label">{label}</p>
-        <h3 className="stat-value">{value}</h3>
-      </div>
+      <span className={`text-sm ${labelClass}`}>{step.label}</span>
     </div>
   );
 };
 
-export default StatCard;
+export default Step;

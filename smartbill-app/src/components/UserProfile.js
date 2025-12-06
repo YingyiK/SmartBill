@@ -1,15 +1,15 @@
+// UserProfile.js
 import React from 'react';
-import './UserProfile.css';
 
 const UserProfile = () => (
-  <div className="user-profile-container">
-    <div className="user-profile-content">
-      <div className="user-avatar">
-        <span className="user-initial">U</span>
+  <div className="p-4 border-t border-gray-200">
+    <div className="flex items-center gap-3">
+      <div className="w-10 h-10 rounded-full bg-gray-200 text-gray-600 font-medium flex items-center justify-center">
+        U
       </div>
-      <div className="user-info">
-        <p className="user-name">User</p>
-        <p className="user-email">user@example.com</p>
+      <div className="min-w-0">
+        <p className="text-sm font-medium text-gray-900 truncate">User</p>
+        <p className="text-xs text-gray-500 truncate">user@example.com</p>
       </div>
     </div>
   </div>

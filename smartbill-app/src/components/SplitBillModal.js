@@ -1,481 +1,188 @@
 import React, { useState, useEffect } from 'react';
 import { X, Users, DollarSign, Send, Check, Mail } from 'lucide-react';
 import { contactsAPI, splitsAPI } from '../services/api';
-import './SplitBillModal.css';
 
 const SplitBillModal = ({ isOpen, onClose, expense, onSuccess }) => {
   const [allContacts, setAllContacts] = useState([]);
-  const [relevantContacts, setRelevantContacts] = useState([]); // Only contacts related to this expense
+  const [relevantContacts, setRelevantContacts] = useState([]);
   const [existingSplits, setExistingSplits] = useState([]);
   const [selectedContactIds, setSelectedContactIds] = useState([]);
-  const [splitCalculations, setSplitCalculations] = useState({}); // { contactId: { amount, items, aaDetails } }
+  const [splitCalculations, setSplitCalculations] = useState({});
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    if (isOpen && expense) {
-      loadData();
-    }
+    if (isOpen && expense) loadData();
   }, [isOpen, expense]);
 
   const loadData = async () => {
+    setLoading(true);
     try {
-      setLoading(true);
-      setError('');
-      
-      // Load contacts and existing splits in parallel
-      const [contactsResponse, splitsResponse] = await Promise.all([
+      const [contactsRes, splitsRes] = await Promise.all([
         contactsAPI.getContacts(),
-        splitsAPI.getSplits(expense.id).catch(() => ({ splits: [] })) // Ignore error if no splits exist
+        splitsAPI.getSplits(expense.id).catch(() => ({ splits: [] })),
       ]);
-      
-      const loadedContacts = contactsResponse.contacts || [];
-      setAllContacts(loadedContacts);
-      const splits = splitsResponse.splits || [];
+      const contacts = contactsRes.contacts || [];
+      const splits = splitsRes.splits || [];
+      setAllContacts(contacts);
       setExistingSplits(splits);
-      
-      // Filter contacts to only show those related to this expense
-      // Match contacts with expense participants by name
-      const relevant = loadedContacts.filter(contact => {
-        if (!expense.participants || expense.participants.length === 0) {
-          // If no participants in expense, check if contact is in existing splits
-          return splits.some(s => s.contact_id === contact.id);
-        }
-        
-        const contactName = (contact.nickname || contact.friend_email.split('@')[0]).toLowerCase();
-        return expense.participants.some(participant => {
-          const participantName = participant.name.toLowerCase();
-          return contactName === participantName || 
-                 contactName.includes(participantName) || 
-                 participantName.includes(contactName);
+
+      const relevant = contacts.filter((c) => {
+        if (!expense.participants?.length) return splits.some((s) => s.contact_id === c.id);
+        const name = (c.nickname || c.friend_email.split('@')[0]).toLowerCase();
+        return expense.participants.some((p) => {
+          const pName = p.name.toLowerCase();
+          return name === pName || name.includes(pName) || pName.includes(name);
         });
       });
-      
       setRelevantContacts(relevant);
-      
-      // If splits exist, pre-select those contacts
-      if (splits.length > 0) {
-        const splitContactIds = splits
-          .filter(s => s.contact_id && relevant.some(c => c.id === s.contact_id))
-          .map(s => s.contact_id);
-        setSelectedContactIds(splitContactIds);
-        
-        // Calculate split details from existing splits
-        const calculations = {};
-        splits.forEach(split => {
-          if (split.contact_id && relevant.some(c => c.id === split.contact_id)) {
-            calculations[split.contact_id] = {
-              amount: split.amount_owed,
-              items: split.items_detail ? (typeof split.items_detail === 'string' ? JSON.parse(split.items_detail) : split.items_detail) : [],
-              aaDetails: calculateAADetails(split, expense, splits)
-            };
+
+      if (splits.length) {
+        const ids = splits.filter((s) => relevant.some((c) => c.id === s.contact_id)).map((s) => s.contact_id);
+        setSelectedContactIds(ids);
+        const calc = {};
+        splits.forEach((s) => {
+          if (s.contact_id && relevant.some((c) => c.id === s.contact_id)) {
+            calc[s.contact_id] = { amount: s.amount_owed, items: typeof s.items_detail === 'string' ? JSON.parse(s.items_detail) : s.items_detail || [], aaDetails: [] };
           }
         });
-        setSplitCalculations(calculations);
+        setSplitCalculations(calc);
       } else {
-        // No existing splits, calculate from expense participants
-        const calculations = calculateSplitsFromParticipants(relevant);
-        setSplitCalculations(calculations);
+        const calc = calculateSplitsFromParticipants(relevant);
+        setSplitCalculations(calc);
       }
     } catch (err) {
-      console.error('Failed to load data:', err);
       setError('Failed to load data: ' + err.message);
     } finally {
       setLoading(false);
     }
   };
 
-  const calculateSplitsFromParticipants = (contactsList) => {
-    if (!expense.participants || !expense.items || !contactsList) return {};
-    
-    const calculations = {};
-    
-    // Build item price map with normalized keys (lowercase, trimmed)
-    const itemPriceMap = {};
-    const itemNameMap = {}; // Map from normalized name to original name
-    expense.items.forEach(item => {
-      const normalizedName = item.name.toLowerCase().trim();
-      itemPriceMap[normalizedName] = item.price;
-      itemNameMap[normalizedName] = item.name; // Store original name
-    });
-    
-    // Helper function to normalize item name
-    const normalizeName = (name) => {
-      return typeof name === 'string' ? name.toLowerCase().trim() : String(name).toLowerCase().trim();
-    };
-    
-    // Helper function to find item price by matching normalized names
-    const findItemPrice = (itemName) => {
-      const normalized = normalizeName(itemName);
-      // Try exact match first
-      if (itemPriceMap[normalized] !== undefined) {
-        return { price: itemPriceMap[normalized], originalName: itemNameMap[normalized] || itemName };
-      }
-      // Try partial match
-      for (const [key, price] of Object.entries(itemPriceMap)) {
-        if (key.includes(normalized) || normalized.includes(key)) {
-          return { price, originalName: itemNameMap[key] || key };
-        }
-      }
-      return { price: 0, originalName: itemName };
-    };
-    
-    // Calculate for each participant
-    expense.participants.forEach(participant => {
-      if (!participant.items) return;
-      
-      let totalAmount = 0;
-      const aaDetails = [];
-      const participantItems = typeof participant.items === 'string' 
-        ? JSON.parse(participant.items) 
-        : participant.items;
-      
-      participantItems.forEach(itemName => {
-        // Find the item price using normalized matching
-        const { price: itemPrice, originalName } = findItemPrice(itemName);
-        
-        // Check if item is shared (appears in multiple participants) - use normalized matching
-        const normalizedItemName = normalizeName(itemName);
-        const sharedCount = expense.participants.filter(p => {
-          const pItems = typeof p.items === 'string' ? JSON.parse(p.items) : (p.items || []);
-          return pItems.some(pItem => normalizeName(pItem) === normalizedItemName);
+  const calculateSplitsFromParticipants = (contacts) => {
+    if (!expense.participants || !expense.items) return {};
+    const calc = {};
+    expense.participants.forEach((p) => {
+      if (!p.items) return;
+      const contact = contacts.find((c) => {
+        const name = (c.nickname || c.friend_email.split('@')[0]).toLowerCase();
+        return name === p.name.toLowerCase() || name.includes(p.name.toLowerCase()) || p.name.toLowerCase().includes(name);
+      });
+      if (!contact) return;
+      let total = 0;
+      const items = typeof p.items === 'string' ? JSON.parse(p.items) : p.items;
+      items.forEach((itemName) => {
+        const item = expense.items.find((i) => i.name.toLowerCase().trim() === itemName.toLowerCase().trim());
+        if (!item) return;
+        const shared = expense.participants.filter((pp) => {
+          const ppItems = typeof pp.items === 'string' ? JSON.parse(pp.items) : pp.items;
+          return ppItems.some((ii) => ii.toLowerCase().trim() === itemName.toLowerCase().trim());
         }).length;
-        
-        const amountPerPerson = sharedCount > 0 ? itemPrice / sharedCount : itemPrice;
-        totalAmount += amountPerPerson;
-        
-        aaDetails.push({
-          itemName: originalName, // Use original name for display
-          itemPrice,
-          sharedWith: sharedCount || 1, // At least shared with 1 person
-          amountPerPerson
-        });
+        total += item.price / (shared || 1);
       });
-      
-      // Try to find matching contact
-      const matchedContact = contactsList.find(c => {
-        const contactName = (c.nickname || c.friend_email.split('@')[0]).toLowerCase();
-        const participantName = participant.name.toLowerCase();
-        return contactName === participantName || 
-               contactName.includes(participantName) || 
-               participantName.includes(contactName);
-      });
-      
-      if (matchedContact) {
-        calculations[matchedContact.id] = {
-          amount: totalAmount,
-          items: participantItems,
-          aaDetails
-        };
-      }
+      calc[contact.id] = { amount: total, items, aaDetails: [] };
     });
-    
-    return calculations;
-  };
-
-  const calculateAADetails = (split, expense, allSplits = []) => {
-    if (!split.items_detail || !expense.items) return [];
-    
-    const items = typeof split.items_detail === 'string' 
-      ? JSON.parse(split.items_detail) 
-      : split.items_detail;
-    
-    // Build item price map with normalized keys (lowercase, trimmed)
-    const itemPriceMap = {};
-    const itemNameMap = {}; // Map from normalized name to original name
-    expense.items.forEach(item => {
-      const normalizedName = item.name.toLowerCase().trim();
-      itemPriceMap[normalizedName] = item.price;
-      itemNameMap[normalizedName] = item.name; // Store original name
-    });
-    
-    // Helper function to normalize item name
-    const normalizeName = (name) => {
-      return typeof name === 'string' ? name.toLowerCase().trim() : String(name).toLowerCase().trim();
-    };
-    
-    // Helper function to find item price by matching normalized names
-    const findItemPrice = (itemName) => {
-      const normalized = normalizeName(itemName);
-      // Try exact match first
-      if (itemPriceMap[normalized] !== undefined) {
-        return { price: itemPriceMap[normalized], originalName: itemNameMap[normalized] || itemName };
-      }
-      // Try partial match
-      for (const [key, price] of Object.entries(itemPriceMap)) {
-        if (key.includes(normalized) || normalized.includes(key)) {
-          return { price, originalName: itemNameMap[key] || key };
-        }
-      }
-      return { price: 0, originalName: itemName };
-    };
-    
-    const aaDetails = [];
-    items.forEach(itemName => {
-      // Find the item price using normalized matching
-      const { price: itemPrice, originalName } = findItemPrice(itemName);
-      
-      // Check if item is shared - also use normalized matching
-      const normalizedItemName = normalizeName(itemName);
-      const sharedCount = allSplits.filter(s => {
-        const sItems = s.items_detail ? (typeof s.items_detail === 'string' ? JSON.parse(s.items_detail) : s.items_detail) : [];
-        return sItems.some(sItem => normalizeName(sItem) === normalizedItemName);
-      }).length;
-      
-      const amountPerPerson = sharedCount > 0 ? itemPrice / sharedCount : itemPrice;
-      
-      aaDetails.push({
-        itemName: originalName, // Use original name for display
-        itemPrice,
-        sharedWith: sharedCount || 1, // At least shared with 1 person (themselves)
-        amountPerPerson
-      });
-    });
-    
-    return aaDetails;
+    return calc;
   };
 
   const handleToggleContact = (contactId) => {
-    setSelectedContactIds(prev => {
+    setSelectedContactIds((prev) => {
       if (prev.includes(contactId)) {
-        // Remove
-        const newCalculations = { ...splitCalculations };
-        delete newCalculations[contactId];
-        setSplitCalculations(newCalculations);
-        return prev.filter(id => id !== contactId);
+        const next = { ...splitCalculations };
+        delete next[contactId];
+        setSplitCalculations(next);
+        return prev.filter((id) => id !== contactId);
       } else {
-        // Add - calculate split for this contact
-        const contact = relevantContacts.find(c => c.id === contactId);
-        if (!contact) return prev;
-        
-        // Check if we already have calculation (from existing splits or previous calculation)
-        if (splitCalculations[contactId]) {
-          return [...prev, contactId];
-        }
-        
-        // Try to find this contact in expense participants
-        const participant = expense.participants?.find(p => {
-          const contactName = (contact.nickname || contact.friend_email.split('@')[0]).toLowerCase();
-          const participantName = p.name.toLowerCase();
-          return contactName === participantName || 
-                 contactName.includes(participantName) || 
-                 participantName.includes(contactName);
-        });
-        
-        if (participant && expense.items) {
-          // Build item price map with normalized keys (lowercase, trimmed)
-          const itemPriceMap = {};
-          const itemNameMap = {}; // Map from normalized name to original name
-          expense.items.forEach(item => {
-            const normalizedName = item.name.toLowerCase().trim();
-            itemPriceMap[normalizedName] = item.price;
-            itemNameMap[normalizedName] = item.name; // Store original name
-          });
-          
-          // Helper function to normalize item name
-          const normalizeName = (name) => {
-            return typeof name === 'string' ? name.toLowerCase().trim() : String(name).toLowerCase().trim();
-          };
-          
-          // Helper function to find item price by matching normalized names
-          const findItemPrice = (itemName) => {
-            const normalized = normalizeName(itemName);
-            // Try exact match first
-            if (itemPriceMap[normalized] !== undefined) {
-              return { price: itemPriceMap[normalized], originalName: itemNameMap[normalized] || itemName };
-            }
-            // Try partial match
-            for (const [key, price] of Object.entries(itemPriceMap)) {
-              if (key.includes(normalized) || normalized.includes(key)) {
-                return { price, originalName: itemNameMap[key] || key };
-              }
-            }
-            return { price: 0, originalName: itemName };
-          };
-          
-          let totalAmount = 0;
-          const aaDetails = [];
-          const participantItems = typeof participant.items === 'string' 
-            ? JSON.parse(participant.items) 
-            : participant.items || [];
-          
-          participantItems.forEach(itemName => {
-            // Find the item price using normalized matching
-            const { price: itemPrice, originalName } = findItemPrice(itemName);
-            
-            // Count how many participants share this item - use normalized matching
-            const normalizedItemName = normalizeName(itemName);
-            const sharedCount = expense.participants?.filter(p => {
-              const pItems = typeof p.items === 'string' ? JSON.parse(p.items) : (p.items || []);
-              return pItems.some(pItem => normalizeName(pItem) === normalizedItemName);
-            }).length || 1;
-            
-            const amountPerPerson = sharedCount > 0 ? itemPrice / sharedCount : itemPrice;
-            totalAmount += amountPerPerson;
-            
-            aaDetails.push({
-              itemName: originalName, // Use original name for display
-              itemPrice,
-              sharedWith: sharedCount,
-              amountPerPerson
-            });
-          });
-          
-          setSplitCalculations(prev => ({
-            ...prev,
-            [contactId]: {
-              amount: totalAmount,
-              items: participantItems,
-              aaDetails
-            }
-          }));
-        } else {
-          // Contact not found in participants - use default (0 or equal split)
-          // For now, set to 0 and let user know they need to configure manually
-          // Actually, since we're only showing contacts that match participants, this shouldn't happen
-          // But just in case:
-          setSplitCalculations(prev => ({
-            ...prev,
-            [contactId]: {
-              amount: 0,
-              items: [],
-              aaDetails: []
-            }
-          }));
-        }
-        
+        const contact = relevantContacts.find((c) => c.id === contactId);
+        const calc = calculateSplitsFromParticipants([contact]);
+        setSplitCalculations((prev) => ({ ...prev, ...calc }));
         return [...prev, contactId];
       }
     });
   };
 
   const handleSendBills = async () => {
-    if (selectedContactIds.length === 0) {
-      setError('Please select at least one person to send bills to');
-      return;
-    }
-
+    if (!selectedContactIds.length) return setError('Select at least one person');
+    setSending(true);
     try {
-      setSending(true);
-      setError('');
-      
-      // Create or update splits
-      const participants = selectedContactIds.map(contactId => {
-        const contact = relevantContacts.find(c => c.id === contactId);
-        const calculation = splitCalculations[contactId];
-        
-        if (!contact || !calculation) {
-          throw new Error(`Invalid data for contact ${contactId}`);
-        }
-        
+      const participants = selectedContactIds.map((id) => {
+        const contact = relevantContacts.find((c) => c.id === id);
+        const calc = splitCalculations[id];
         return {
           name: contact.nickname || contact.friend_email.split('@')[0],
           email: contact.friend_email,
           contact_id: contact.id,
-          amount_owed: calculation.amount,
-          items_detail: calculation.items || []
+          amount_owed: calc.amount,
+          items_detail: calc.items || [],
         };
       });
-      
-      // Create or update splits
       await splitsAPI.createSplits(expense.id, participants);
-      
-      // Get the created splits
-      const splitsResponse = await splitsAPI.getSplits(expense.id);
-      const splitIds = splitsResponse.splits
-        .filter(s => selectedContactIds.includes(s.contact_id))
-        .map(s => s.id);
-      
-      // Send bills
-      await splitsAPI.sendBills(expense.id, splitIds);
-      
-      if (onSuccess) onSuccess();
+      const splitsRes = await splitsAPI.getSplits(expense.id);
+      const ids = splitsRes.splits.filter((s) => selectedContactIds.includes(s.contact_id)).map((s) => s.id);
+      await splitsAPI.sendBills(expense.id, ids);
+      onSuccess?.();
       onClose();
     } catch (err) {
       setError('Failed to send bills: ' + err.message);
-      console.error('Send bills error:', err);
     } finally {
       setSending(false);
     }
   };
 
   if (!isOpen || !expense) return null;
-
-  const selectedContacts = relevantContacts.filter(c => selectedContactIds.includes(c.id));
+  const selectedContacts = relevantContacts.filter((c) => selectedContactIds.includes(c.id));
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content split-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-xl w-[90%] max-w-2xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        {/* Header */}
+        <div className="flex items-start justify-between px-6 py-4 border-b border-gray-200">
           <div>
-            <h2>Split & Send Bill</h2>
-            <p className="modal-subtitle">{expense.store_name} - ${expense.total_amount?.toFixed(2)}</p>
+            <h2 className="text-xl font-bold text-gray-900">Split & Send Bill</h2>
+            <p className="text-sm text-gray-500 mt-1">{expense.store_name} - ${expense.total_amount?.toFixed(2)}</p>
           </div>
-          <button className="modal-close" onClick={onClose}>
-            <X size={24} />
+          <button onClick={onClose} className="p-2 text-gray-400 hover:bg-gray-100 rounded-lg">
+            <X size={20} />
           </button>
         </div>
 
-        {error && (
-          <div className="error-banner">
-            {error}
-          </div>
-        )}
+        {error && <div className="mx-6 mt-4 px-4 py-2 bg-red-50 border border-red-200 text-red-600 text-sm rounded-lg">{error}</div>}
 
-        {loading ? (
-          <div className="modal-body">
-            <div className="loading-state">
-              <p>Loading split data...</p>
-            </div>
-          </div>
-        ) : (
-          <>
-            <div className="modal-body">
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto px-6 py-4">
+          {loading ? (
+            <div className="text-center py-10 text-gray-500">Loading split data...</div>
+          ) : (
+            <>
               {/* Select Contacts */}
-              <div className="split-section">
-                <h3>Select Friends to Send Bills</h3>
-                <p className="section-hint">
-                  Only contacts related to this expense are shown
-                </p>
+              <div className="mb-6">
+                <h3 className="text-sm font-semibold text-gray-900 mb-1">Select Friends to Send Bills</h3>
+                <p className="text-xs text-gray-500 mb-3">Only contacts related to this expense are shown</p>
                 {relevantContacts.length === 0 ? (
-                  <div className="empty-contacts">
-                    <Users size={32} color="#9ca3af" />
+                  <div className="text-center py-8 text-gray-400">
+                    <Users size={32} className="mx-auto mb-2" />
                     <p>No related contacts found</p>
-                    <p className="small-text">
-                      {expense.participants && expense.participants.length > 0
-                        ? 'Make sure the participants in this expense match your contacts'
-                        : 'This expense has no participants assigned'}
-                    </p>
+                    <p className="text-xs mt-1">Make sure participant names match your contacts</p>
                   </div>
                 ) : (
-                  <div className="contacts-grid">
-                    {relevantContacts.map(contact => {
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                    {relevantContacts.map((contact) => {
                       const isSelected = selectedContactIds.includes(contact.id);
-                      const calculation = splitCalculations[contact.id];
-                      
+                      const calc = splitCalculations[contact.id];
                       return (
                         <div
                           key={contact.id}
-                          className={`contact-chip ${isSelected ? 'selected' : ''}`}
                           onClick={() => handleToggleContact(contact.id)}
+                          className={`flex items-center gap-2 p-3 border rounded-lg cursor-pointer transition ${isSelected ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-blue-400'}`}
                         >
-                          <div className="contact-avatar">
+                          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 text-white flex items-center justify-center text-sm font-semibold">
                             {(contact.nickname || contact.friend_email)[0].toUpperCase()}
                           </div>
-                          <div className="contact-info">
-                            <span className="contact-name">
-                              {contact.nickname || contact.friend_email.split('@')[0]}
-                            </span>
-                            {isSelected && calculation && (
-                              <span className="contact-amount">
-                                ${calculation.amount.toFixed(2)}
-                              </span>
-                            )}
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-medium text-gray-900 truncate">{contact.nickname || contact.friend_email.split('@')[0]}</div>
+                            {isSelected && calc && <div className="text-xs text-blue-600">${calc.amount.toFixed(2)}</div>}
                           </div>
-                          {isSelected && (
-                            <Check size={16} className="check-icon" />
-                          )}
+                          {isSelected && <Check size={16} className="text-blue-600" />}
                         </div>
                       );
                     })}
@@ -483,59 +190,51 @@ const SplitBillModal = ({ isOpen, onClose, expense, onSuccess }) => {
                 )}
               </div>
 
-              {/* Split Details Preview */}
+              {/* Preview */}
               {selectedContacts.length > 0 && (
-                <div className="split-section">
-                  <h3>Bill Details Preview</h3>
-                  <div className="split-preview-list">
-                    {selectedContacts.map(contact => {
-                      const calculation = splitCalculations[contact.id];
-                      if (!calculation) return null;
-                      
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-900 mb-3">Bill Preview</h3>
+                  <div className="space-y-4">
+                    {selectedContacts.map((contact) => {
+                      const calc = splitCalculations[contact.id];
+                      if (!calc) return null;
                       return (
-                        <div key={contact.id} className="split-preview-item">
-                          <div className="preview-header">
-                            <div className="preview-contact">
-                              <div className="contact-avatar small">
+                        <div key={contact.id} className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+                          <div className="flex items-start justify-between mb-3">
+                            <div className="flex items-center gap-3">
+                              <div className="w-7 h-7 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 text-white flex items-center justify-center text-xs font-semibold">
                                 {(contact.nickname || contact.friend_email)[0].toUpperCase()}
                               </div>
                               <div>
-                                <div className="preview-name">
-                                  {contact.nickname || contact.friend_email.split('@')[0]}
-                                </div>
-                                <div className="preview-email">
+                                <div className="font-semibold text-gray-900">{contact.nickname || contact.friend_email.split('@')[0]}</div>
+                                <div className="flex items-center gap-1 text-xs text-gray-500">
                                   <Mail size={12} />
                                   {contact.friend_email}
                                 </div>
                               </div>
                             </div>
-                            <div className="preview-total">
-                              <span className="total-label">Total</span>
-                              <span className="total-amount">${calculation.amount.toFixed(2)}</span>
+                            <div className="text-right">
+                              <div className="text-xs text-gray-500">Total</div>
+                              <div className="text-2xl font-bold text-emerald-600">${calc.amount.toFixed(2)}</div>
                             </div>
                           </div>
-                          
-                          {calculation.items && calculation.items.length > 0 && (
-                            <div className="preview-items">
-                              <div className="items-header">Items:</div>
-                              <div className="items-list">
-                                {calculation.aaDetails?.map((aa, idx) => (
-                                  <div key={idx} className="item-detail">
-                                    <span className="item-name">{aa.itemName}</span>
-                                    <span className="item-price-info">
+                          {calc.items?.length > 0 && (
+                            <div>
+                              <div className="text-xs font-semibold text-gray-700 mb-2">Items:</div>
+                              <div className="space-y-2">
+                                {calc.aaDetails?.map((aa, idx) => (
+                                  <div key={idx} className="flex justify-between items-center px-3 py-2 bg-white border border-gray-200 rounded-md">
+                                    <span className="text-sm text-gray-800">{aa.itemName}</span>
+                                    <div className="text-right">
                                       {aa.sharedWith > 1 ? (
                                         <>
-                                          <span className="item-shared">
-                                            ${aa.amountPerPerson.toFixed(2)} (shared with {aa.sharedWith})
-                                          </span>
-                                          <span className="item-original-price">
-                                            ${aa.itemPrice.toFixed(2)} ÷ {aa.sharedWith}
-                                          </span>
+                                          <div className="text-sm font-semibold text-blue-600">${aa.amountPerPerson.toFixed(2)}</div>
+                                          <div className="text-xs text-gray-500">shared with {aa.sharedWith}</div>
                                         </>
                                       ) : (
-                                        <span>${aa.itemPrice.toFixed(2)}</span>
+                                        <div className="text-sm font-semibold text-gray-900">${aa.itemPrice.toFixed(2)}</div>
                                       )}
-                                    </span>
+                                    </div>
                                   </div>
                                 ))}
                               </div>
@@ -547,32 +246,22 @@ const SplitBillModal = ({ isOpen, onClose, expense, onSuccess }) => {
                   </div>
                 </div>
               )}
-            </div>
+            </>
+          )}
+        </div>
 
-            <div className="modal-footer">
-              <button className="btn-secondary" onClick={onClose}>
-                Cancel
-              </button>
-              <button
-                className="btn-primary"
-                onClick={handleSendBills}
-                disabled={selectedContactIds.length === 0 || sending}
-              >
-                {sending ? (
-                  <>
-                    <Send size={16} />
-                    Sending...
-                  </>
-                ) : (
-                  <>
-                    <Send size={16} />
-                    Send Bills to {selectedContactIds.length} {selectedContactIds.length === 1 ? 'Person' : 'People'}
-                  </>
-                )}
-              </button>
-            </div>
-          </>
-        )}
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200">
+          <button onClick={onClose} className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">Cancel</button>
+          <button
+            onClick={handleSendBills}
+            disabled={selectedContactIds.length === 0 || sending}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+          >
+            <Send size={16} />
+            {sending ? 'Sending...' : `Send Bills to ${selectedContactIds.length} ${selectedContactIds.length === 1 ? 'Person' : 'People'}`}
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -1,287 +1,236 @@
-import React, { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
-import { Receipt, DollarSign, Users, TrendingUp, Plus, FileText, Trash2, Share2, Eye } from "lucide-react";
-import { expenseAPI } from "../services/api";
-import SplitBillModal from "../components/SplitBillModal";
-import "./Dashboard.css";
+import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import {
+  Receipt, DollarSign, Users, TrendingUp, Plus, FileText, Trash2, Share2, Eye
+} from 'lucide-react';
+import { expenseAPI } from '../services/api';
+import SplitBillModal from '../components/SplitBillModal';
 
 export default function Dashboard() {
   const navigate = useNavigate();
   const [expenses, setExpenses] = useState([]);
   const [sharedExpenses, setSharedExpenses] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('my'); // 'my' or 'shared'
+  const [activeTab, setActiveTab] = useState('my');
   const [selectedExpense, setSelectedExpense] = useState(null);
   const [isSplitModalOpen, setIsSplitModalOpen] = useState(false);
   const [stats, setStats] = useState({
     totalExpenses: 0,
     totalAmount: 0,
     activeParticipants: 0,
-    avgPerExpense: 0
+    avgPerExpense: 0,
   });
 
   useEffect(() => {
-    loadAllData();
+    (async () => {
+      setLoading(true);
+      try {
+        const [myRes, sharedRes] = await Promise.all([
+          expenseAPI.getExpenses(50, 0),
+          expenseAPI.getSharedExpenses(50, 0),
+        ]);
+        const my = myRes.expenses || [];
+        const shared = sharedRes.expenses || [];
+        setExpenses(my);
+        setSharedExpenses(shared);
+
+        const total = myRes.total || 0;
+        const amount = my.reduce((s, e) => s + (e.total_amount || 0), 0);
+        const participants = new Set();
+        my.forEach((e) => e.participants?.forEach((p) => participants.add(p.name)));
+        setStats({
+          totalExpenses: total,
+          totalAmount: amount,
+          activeParticipants: participants.size,
+          avgPerExpense: total ? amount / total : 0,
+        });
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, []);
 
-  const loadAllData = async () => {
-    await Promise.all([
-      loadExpenses(),
-      loadSharedExpenses()
-    ]);
-  };
-
-  const loadExpenses = async () => {
+  const handleDeleteExpense = async (id, name) => {
+    if (!window.confirm(`Delete expense from ${name || 'Unknown Store'}?`)) return;
     try {
-      setLoading(true);
-      const response = await expenseAPI.getExpenses(50, 0);
-      setExpenses(response.expenses || []);
-      
-      // Calculate stats
-      const totalExpenses = response.total || 0;
-      const totalAmount = (response.expenses || []).reduce((sum, exp) => sum + (exp.total_amount || 0), 0);
-      const avgPerExpense = totalExpenses > 0 ? totalAmount / totalExpenses : 0;
-      
-      // Count unique participants
-      const allParticipants = new Set();
-      (response.expenses || []).forEach(exp => {
-        (exp.participants || []).forEach(p => allParticipants.add(p.name));
-      });
-      
-      setStats({
-        totalExpenses,
-        totalAmount,
-        activeParticipants: allParticipants.size,
-        avgPerExpense
-      });
-    } catch (error) {
-      console.error('Failed to load expenses:', error);
-    } finally {
-      setLoading(false);
+      await expenseAPI.deleteExpense(id);
+      setExpenses((prev) => prev.filter((e) => e.id !== id));
+    } catch (e) {
+      alert('Delete failed');
     }
   };
 
-  const loadSharedExpenses = async () => {
-    try {
-      const response = await expenseAPI.getSharedExpenses(50, 0);
-      setSharedExpenses(response.expenses || []);
-    } catch (error) {
-      console.error('Failed to load shared expenses:', error);
-    }
-  };
-
-  const handleDeleteExpense = async (expenseId, expenseName) => {
-    if (!window.confirm(`Are you sure you want to delete this expense from ${expenseName || 'Unknown Store'}? This action cannot be undone.`)) {
-      return;
-    }
-
-    try {
-      await expenseAPI.deleteExpense(expenseId);
-      await loadExpenses();
-    } catch (error) {
-      console.error('Failed to delete expense:', error);
-      alert(`Failed to delete expense: ${error.message || 'Unknown error'}`);
-    }
-  };
-
-  const handleSplitBill = (expense) => {
-    setSelectedExpense(expense);
+  const handleSplitBill = (exp) => {
+    setSelectedExpense(exp);
     setIsSplitModalOpen(true);
   };
 
-  const handleSplitSuccess = () => {
-    loadAllData(); // Reload all data
-  };
-
-  const statsData = [
-    {
-      icon: <Receipt size={24} />,
-      value: stats.totalExpenses.toString(),
-      label: "Total Expenses",
-      change: "",
-      color: "#2563eb"
-    },
-    {
-      icon: <DollarSign size={24} />,
-      value: `$${stats.totalAmount.toFixed(2)}`,
-      label: "Total Amount",
-      change: "",
-      color: "#10b981"
-    },
-    {
-      icon: <Users size={24} />,
-      value: stats.activeParticipants.toString(),
-      label: "Active Participants",
-      change: "",
-      color: "#a855f7"
-    },
-    {
-      icon: <TrendingUp size={24} />,
-      value: `$${stats.avgPerExpense.toFixed(2)}`,
-      label: "Avg. per Expense",
-      change: "",
-      color: "#f97316"
-    }
-  ];
-
   const displayExpenses = activeTab === 'my' ? expenses : sharedExpenses;
 
+  const statCards = [
+    { icon: <Receipt size={24} />, value: stats.totalExpenses, label: 'Total Expenses', color: 'bg-blue-600' },
+    { icon: <DollarSign size={24} />, value: `$${stats.totalAmount.toFixed(2)}`, label: 'Total Amount', color: 'bg-emerald-600' },
+    { icon: <Users size={24} />, value: stats.activeParticipants, label: 'Active Participants', color: 'bg-purple-600' },
+    { icon: <TrendingUp size={24} />, value: `$${stats.avgPerExpense.toFixed(2)}`, label: 'Avg. per Expense', color: 'bg-orange-600' },
+  ];
+
   return (
-    <main className="main">
-      <div className="header">
-        <h2>Dashboard</h2>
-        <button className="btn" onClick={() => navigate('/new-expense')}>
-          + New Expense
+    <main className="max-w-7xl mx-auto px-6 py-8">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-2">
+        <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
+        <button
+          onClick={() => navigate('/new-expense')}
+          className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+        >
+          <Plus size={20} />
+          New Expense
         </button>
       </div>
-      <p className="subtext">Welcome back! Here's your expense overview.</p>
+      <p className="text-gray-500 mb-6">Welcome back! Here's your expense overview.</p>
 
-      <div className="cards-row">
-        {statsData.map((stat, index) => (
-          <div className="card" key={index}>
-            <div className="card-header">
-              <div className="card-icon" style={{ backgroundColor: stat.color }}>
-                {stat.icon}
-              </div>
-              {stat.change && <div className="card-change">{stat.change}</div>}
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        {statCards.map((s, i) => (
+          <div key={i} className="bg-white rounded-xl shadow p-6 flex items-center gap-4">
+            <div className={`w-12 h-12 ${s.color} text-white rounded-lg flex items-center justify-center`}>{s.icon}</div>
+            <div>
+              <div className="text-sm text-gray-500">{s.label}</div>
+              <div className="text-2xl font-bold text-gray-900">{s.value}</div>
             </div>
-            <div className="card-label">{stat.label}</div>
-            <div className="card-value">{stat.value}</div>
           </div>
         ))}
       </div>
 
-      <div className="recent-box">
-        <div className="expenses-header">
-          <h3>Expenses</h3>
-          <div className="tab-buttons">
-            <button
-              className={`tab-button ${activeTab === 'my' ? 'active' : ''}`}
-              onClick={() => setActiveTab('my')}
-            >
-              <Receipt size={16} />
-              My Expenses ({expenses.length})
-            </button>
-            <button
-              className={`tab-button ${activeTab === 'shared' ? 'active' : ''}`}
-              onClick={() => setActiveTab('shared')}
-            >
-              <Share2 size={16} />
-              Shared with Me ({sharedExpenses.length})
-            </button>
-          </div>
-        </div>
-
-        {loading ? (
-          <div className="loading-state">
-            <p>Loading expenses...</p>
-          </div>
-        ) : displayExpenses.length === 0 ? (
-          <div className="empty">
-            <div className="empty-icon">
-              <Receipt size={48} color="#d1d5db" />
-            </div>
-            <div className="empty-text">
-              {activeTab === 'my' ? 'No expenses yet' : 'No shared expenses yet'}
-            </div>
-            <p className="empty-subtext">
-              {activeTab === 'my' 
-                ? 'Create your first expense to get started'
-                : 'When friends split bills with you, they\'ll appear here'}
-            </p>
-            {activeTab === 'my' && (
-              <button className="btn" onClick={() => navigate('/new-expense')}>
-                + Create Your First Expense
+      {/* Expenses Tabs */}
+      <div className="bg-white rounded-xl shadow">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+          <h2 className="text-lg font-semibold text-gray-900">Expenses</h2>
+          <div className="flex gap-2">
+            {['my', 'shared'].map((t) => (
+              <button
+                key={t}
+                onClick={() => setActiveTab(t)}
+                className={`px-3 py-1.5 text-sm font-medium rounded-lg border transition ${activeTab === t ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'}`}
+              >
+                {t === 'my' ? `My Expenses (${expenses.length})` : `Shared with Me (${sharedExpenses.length})`}
               </button>
-            )}
-          </div>
-        ) : (
-          <div className="expenses-list">
-            {displayExpenses.map((expense) => (
-              <div key={expense.id} className="expense-item">
-                <div 
-                  className="expense-main"
-                  onClick={() => navigate(`/expense/${expense.id}`)}
-                  style={{ cursor: 'pointer' }}
-                >
-                  <div className="expense-header">
-                    <div className="expense-store">{expense.store_name || 'Unknown Store'}</div>
-                    <div className="expense-amount">${expense.total_amount.toFixed(2)}</div>
-                  </div>
-                  <div className="expense-details">
-                    <div className="expense-date">
-                      {new Date(expense.created_at).toLocaleDateString()}
-                    </div>
-                    {expense.items && expense.items.length > 0 && (
-                      <div className="expense-items-count">
-                        {expense.items.length} items
-                      </div>
-                    )}
-                    {expense.transcript && (
-                      <div className="expense-transcript">
-                        💬 {expense.transcript.substring(0, 50)}...
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <div className="expense-actions" onClick={(e) => e.stopPropagation()}>
-                  {activeTab === 'my' ? (
-                    <>
-                      <button
-                        className="action-btn split-btn"
-                        onClick={() => handleSplitBill(expense)}
-                        title="Split & send bills"
-                      >
-                        <Share2 size={16} />
-                        Split
-                      </button>
-                      <button
-                        className="action-btn delete-btn"
-                        onClick={() => handleDeleteExpense(expense.id, expense.store_name)}
-                        title="Delete expense"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      className="action-btn view-btn"
-                      onClick={() => navigate(`/expense/${expense.id}`)}
-                      title="View expense"
-                    >
-                      <Eye size={16} />
-                      View
-                    </button>
-                  )}
-                </div>
-              </div>
             ))}
           </div>
-        )}
+        </div>
+
+        <div className="p-6">
+          {loading ? (
+            <div className="text-center py-10 text-gray-500">Loading expenses...</div>
+          ) : displayExpenses.length === 0 ? (
+            <div className="text-center py-10">
+              <Receipt className="mx-auto text-gray-300 mb-3" size={48} />
+              <div className="text-gray-700 font-medium">
+                {activeTab === 'my' ? 'No expenses yet' : 'No shared expenses yet'}
+              </div>
+              <p className="text-sm text-gray-500 mt-1">
+                {activeTab === 'my' ? 'Create your first expense to get started' : 'When friends split bills with you, they\'ll appear here'}
+              </p>
+              {activeTab === 'my' && (
+                <button onClick={() => navigate('/new-expense')} className="mt-4 inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                  Create Your First Expense
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {displayExpenses.map((exp) => (
+                <div key={exp.id} className="relative bg-white border border-gray-200 rounded-lg p-4 hover:shadow transition">
+                  <div className="flex items-start justify-between">
+                    <div
+                      className="flex-1 cursor-pointer"
+                      onClick={() => navigate(`/expense/${exp.id}`)}
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="font-semibold text-gray-900">{exp.store_name || 'Unknown Store'}</span>
+                        <span className="text-lg font-bold text-emerald-600">${exp.total_amount.toFixed(2)}</span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-3 text-sm text-gray-500">
+                        <span>{new Date(exp.created_at).toLocaleDateString()}</span>
+                        {exp.items?.length > 0 && <span>{exp.items.length} items</span>}
+                        {exp.transcript && (
+                          <span className="italic text-gray-400">💬 {exp.transcript.slice(0, 50)}…</span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 ml-4" onClick={(e) => e.stopPropagation()}>
+                      {activeTab === 'my' && (
+                        <>
+                          <button
+                            onClick={() => handleSplitBill(exp)}
+                            className="inline-flex items-center gap-1 px-3 py-1.5 border border-blue-600 text-blue-600 rounded-md hover:bg-blue-50"
+                          >
+                            <Share2 size={16} />
+                            Split
+                          </button>
+                          <button
+                            onClick={() => handleDeleteExpense(exp.id, exp.store_name)}
+                            className="inline-flex items-center gap-1 px-3 py-1.5 border border-red-200 text-red-600 rounded-md hover:bg-red-50"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </>
+                      )}
+                      {activeTab === 'shared' && (
+                        <button
+                          onClick={() => navigate(`/expense/${exp.id}`)}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 border border-gray-300 text-gray-600 rounded-md hover:bg-gray-50"
+                        >
+                          <Eye size={16} />
+                          View
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
-      <div className="bottom-row">
-        <div className="box" onClick={() => navigate('/new-expense')}>
-          <div className="box-icon blue">
+      {/* Quick Actions */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-8">
+        <button
+          onClick={() => navigate('/new-expense')}
+          className="bg-white border border-gray-200 rounded-xl p-6 text-left hover:shadow transition"
+        >
+          <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-lg flex items-center justify-center mb-3">
             <Plus size={24} />
           </div>
-          <h4>Create Expense</h4>
-          <p>Upload a bill and split expenses with AI</p>
-        </div>
-        <div className="box" onClick={() => navigate('/participants')}>
-          <div className="box-icon purple">
+          <h3 className="font-semibold text-gray-900 mb-1">Create Expense</h3>
+          <p className="text-sm text-gray-500">Upload a bill and split expenses with AI</p>
+        </button>
+
+        <button
+          onClick={() => navigate('/participants')}
+          className="bg-white border border-gray-200 rounded-xl p-6 text-left hover:shadow transition"
+        >
+          <div className="w-12 h-12 bg-purple-100 text-purple-600 rounded-lg flex items-center justify-center mb-3">
             <Users size={24} />
           </div>
-          <h4>Manage Contacts</h4>
-          <p>Add friends to split bills with</p>
-        </div>
-        <div className="box" onClick={() => navigate('/history')}>
-          <div className="box-icon green">
+          <h3 className="font-semibold text-gray-900 mb-1">Manage Contacts</h3>
+          <p className="text-sm text-gray-500">Add friends to split bills with</p>
+        </button>
+
+        <button
+          onClick={() => navigate('/history')}
+          className="bg-white border border-gray-200 rounded-xl p-6 text-left hover:shadow transition"
+        >
+          <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-lg flex items-center justify-center mb-3">
             <FileText size={24} />
           </div>
-          <h4>View History</h4>
-          <p>Browse all past expenses and splits</p>
-        </div>
+          <h3 className="font-semibold text-gray-900 mb-1">View History</h3>
+          <p className="text-sm text-gray-500">Browse all past expenses and splits</p>
+        </button>
       </div>
 
       {/* Split Bill Modal */}
@@ -293,7 +242,7 @@ export default function Dashboard() {
             setSelectedExpense(null);
           }}
           expense={selectedExpense}
-          onSuccess={handleSplitSuccess}
+          onSuccess={() => loadAllData()}
         />
       )}
     </main>

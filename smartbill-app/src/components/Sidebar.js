@@ -1,56 +1,8 @@
-// import React from 'react';
-// import { useNavigate, useLocation } from 'react-router-dom';
-// import { Home, Users, Clock, Settings, Plus } from 'lucide-react';
-// import Logo from './Logo';
-// import MenuItem from './MenuItem';
-// import UserProfile from './UserProfile';
-// import './Sidebar.css';
-
-// const Sidebar = () => {
-//   const navigate = useNavigate();
-//   const location = useLocation();
-
-//   const menuItems = [
-//     { id: 'dashboard', icon: Home, label: 'Dashboard', path: '/dashboard' },
-//     { id: 'new-expense', icon: Plus, label: 'New Expense', path: '/new-expense' },
-//     { id: 'participants', icon: Users, label: 'Participants', path: '/participants' },
-//     { id: 'history', icon: Clock, label: 'History', path: '/history' },
-//     { id: 'settings', icon: Settings, label: 'Settings', path: '/settings' }
-//   ];
-
-//   const handleMenuClick = (path) => {
-//     navigate(path);
-//   };
-
-//   return (
-//     <div className="sidebar">
-//       <Logo />
-      
-//       <nav className="sidebar-nav">
-//         <ul className="menu-list">
-//           {menuItems.map(item => (
-//             <MenuItem
-//               key={item.id}
-//               icon={item.icon}
-//               label={item.label}
-//               active={location.pathname === item.path}
-//               onClick={() => handleMenuClick(item.path)}
-//             />
-//           ))}
-//         </ul>
-//       </nav>
-
-//       <UserProfile />
-//     </div>
-//   );
-// };
-
-// export default Sidebar;
-
-import React, { useState, useEffect } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
-import { Receipt, Plus, Users, History, Settings, LogOut } from "lucide-react";
-import authService from "../services/authService";
+// Sidebar.js
+import React, { useState, useEffect } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Receipt, Plus, Users, History, Settings, LogOut } from 'lucide-react';
+import authService from '../services/authService';
 
 export default function Sidebar() {
   const location = useLocation();
@@ -58,13 +10,8 @@ export default function Sidebar() {
   const [user, setUser] = useState(null);
 
   useEffect(() => {
-    loadUser();
+    setUser(authService.getCurrentUser());
   }, []);
-
-  const loadUser = () => {
-    const currentUser = authService.getCurrentUser();
-    setUser(currentUser);
-  };
 
   const handleLogout = () => {
     if (window.confirm('Are you sure you want to logout?')) {
@@ -73,74 +20,60 @@ export default function Sidebar() {
     }
   };
 
-  const getUserInitial = () => {
-    if (user?.email) {
-      return user.email[0].toUpperCase();
-    }
-    return 'U';
-  };
-
-  const getUserEmail = () => {
-    return user?.email || 'user@example.com';
-  };
+  const navItems = [
+    { path: '/dashboard', icon: Receipt, label: 'Dashboard' },
+    { path: '/new-expense', icon: Plus, label: 'New Expense' },
+    { path: '/participants', icon: Users, label: 'Contacts' },
+    { path: '/history', icon: History, label: 'History' },
+    { path: '/settings', icon: Settings, label: 'Settings' },
+  ];
 
   return (
-    <aside className="sidebar">
-      <div className="logo">
-        <Receipt size={24} color="#2563eb" />
+    <aside className="w-60 bg-white border-r border-gray-200 flex flex-col">
+      {/* Logo */}
+      <div className="flex items-center gap-3 px-6 py-4 border-b border-gray-200">
+        <Receipt className="text-blue-600" size={24} />
         <div>
-          SmartBill<br />
-          <span>AI Expense Splitting</span>
+          <div className="font-bold text-gray-900">SmartBill</div>
+          <div className="text-xs text-gray-500">AI Expense Splitting</div>
         </div>
       </div>
 
-      <nav className="nav">
-        <Link 
-          to="/dashboard" 
-          className={`nav-item ${location.pathname === '/dashboard' || location.pathname === '/' ? 'active' : ''}`}
-        >
-          <Receipt size={18} />
-          Dashboard
-        </Link>
-        <Link 
-          to="/new-expense" 
-          className={`nav-item ${location.pathname === '/new-expense' ? 'active' : ''}`}
-        >
-          <Plus size={18} />
-          New Expense
-        </Link>
-        <Link 
-          to="/participants" 
-          className={`nav-item ${location.pathname === '/participants' ? 'active' : ''}`}
-        >
-          <Users size={18} />
-          Contacts
-        </Link>
-        <Link 
-          to="/history" 
-          className={`nav-item ${location.pathname === '/history' ? 'active' : ''}`}
-        >
-          <History size={18} />
-          History
-        </Link>
-        <Link 
-          to="/settings" 
-          className={`nav-item ${location.pathname === '/settings' ? 'active' : ''}`}
-        >
-          <Settings size={18} />
-          Settings
-        </Link>
+      {/* Navigation */}
+      <nav className="flex-1 p-4">
+        <div className="flex flex-col gap-2">
+          {navItems.map((item) => (
+            <Link
+              key={item.path}
+              to={item.path}
+              className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition ${
+                location.pathname === item.path
+                  ? 'bg-blue-50 text-blue-600'
+                  : 'text-gray-700 hover:bg-gray-100'
+              }`}
+            >
+              <item.icon size={18} />
+              {item.label}
+            </Link>
+          ))}
+        </div>
       </nav>
 
-      <div className="user-section">
-        <div className="user-info">
-          <div className="user-circle">{getUserInitial()}</div>
-          <div className="user-details">
-            <div className="user-name">{getUserEmail().split('@')[0]}</div>
-            <div className="user-email">{getUserEmail()}</div>
+      {/* User & Logout */}
+      <div className="p-4 border-t border-gray-200">
+        <div className="flex items-center gap-3 mb-3">
+          <div className="w-10 h-10 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold">
+            {user?.email?.[0]?.toUpperCase() || 'U'}
+          </div>
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-gray-900 truncate">{user?.email?.split('@')[0]}</div>
+            <div className="text-xs text-gray-500 truncate">{user?.email}</div>
           </div>
         </div>
-        <button className="logout-btn" onClick={handleLogout} title="Logout">
+        <button
+          onClick={handleLogout}
+          className="w-full flex items-center justify-center gap-2 px-4 py-2 border border-gray-200 rounded-lg text-red-600 hover:bg-red-50 hover:border-red-500 text-sm font-medium transition"
+        >
           <LogOut size={18} />
           Logout
         </button>

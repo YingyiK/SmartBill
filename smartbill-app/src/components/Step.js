@@ -1,25 +1,24 @@
 import React from 'react';
-import './Step.css';
 
 const Step = ({ step, activeStep }) => {
-  const getStepClass = () => {
-    if (step.number === activeStep) return 'step-circle step-active';
-    if (step.number < activeStep) return 'step-circle step-completed';
-    return 'step-circle step-inactive';
-  };
+  const circleClass =
+    step.number === activeStep
+      ? 'bg-blue-600 text-white'
+      : step.number < activeStep
+      ? 'bg-blue-100 text-blue-600'
+      : 'bg-gray-200 text-gray-400';
 
-  const getLabelClass = () => {
-    return step.number === activeStep ? 'step-label step-label-active' : 'step-label';
-  };
+  const labelClass =
+    step.number === activeStep ? 'text-gray-900 font-medium' : 'text-gray-500';
 
   return (
-    <div className="step-container">
-      <div className={getStepClass()}>
+    <div className="flex flex-col items-center">
+      <div
+        className={`w-12 h-12 rounded-full flex items-center justify-center font-semibold mb-2 transition ${circleClass}`}
+      >
         {step.number}
       </div>
-      <span className={getLabelClass()}>
-        {step.label}
-      </span>
+      <span className={`text-sm ${labelClass}`}>{step.label}</span>
     </div>
   );
 };

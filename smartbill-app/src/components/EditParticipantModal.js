@@ -1,13 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
-import './EditParticipantModal.css';
 
 const EditParticipantModal = ({ isOpen, onClose, onUpdate, participant }) => {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [errors, setErrors] = useState({});
 
-  // 当模态框打开时，填充现有数据
   useEffect(() => {
     if (isOpen && participant) {
       setName(participant.name);
@@ -16,123 +14,72 @@ const EditParticipantModal = ({ isOpen, onClose, onUpdate, participant }) => {
     }
   }, [isOpen, participant]);
 
-  // 如果模态框未打开，不渲染
   if (!isOpen || !participant) return null;
 
-  // 表单验证
-  const validateForm = () => {
-    const newErrors = {};
-
-    if (!name.trim()) {
-      newErrors.name = 'Name is required';
-    }
-
-    if (!email.trim()) {
-      newErrors.email = 'Email is required';
-    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      newErrors.email = 'Please enter a valid email';
-    }
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+  const validate = () => {
+    const e = {};
+    if (!name.trim()) e.name = 'Name is required';
+    if (!email.trim()) e.email = 'Email is required';
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) e.email = 'Invalid email';
+    setErrors(e);
+    return Object.keys(e).length === 0;
   };
 
-  // 处理提交
-  const handleSubmit = (e) => {
+  const handleSubmit = e => {
     e.preventDefault();
-    
-    if (validateForm()) {
-      // 创建更新后的参与者对象
-      const updatedParticipant = {
-        ...participant,
-        name: name.trim(),
-        email: email.trim(),
-        avatar: name.trim().charAt(0).toUpperCase()  // 更新头像字母
-      };
-
-      // 调用父组件的更新函数
-      onUpdate(updatedParticipant);
-
-      // 关闭模态框
-      onClose();
-    }
-  };
-
-  // 处理取消
-  const handleCancel = () => {
-    setErrors({});
+    if (!validate()) return;
+    onUpdate({ ...participant, name: name.trim(), email: email.trim(), avatar: name.trim()[0].toUpperCase() });
     onClose();
   };
 
-  // 点击背景关闭
-  const handleBackdropClick = (e) => {
-    if (e.target.className === 'edit-modal-backdrop') {
-      handleCancel();
-    }
-  };
+  const handleCancel = () => { setErrors({}); onClose(); };
 
   return (
-    <div className="edit-modal-backdrop" onClick={handleBackdropClick}>
-      <div className="edit-modal-container">
-        {/* 模态框头部 */}
-        <div className="edit-modal-header">
-          <h2 className="edit-modal-title">Edit Participant</h2>
-          <button 
-            className="edit-modal-close-button"
-            onClick={handleCancel}
-            type="button"
-          >
+    <div
+      onClick={e => e.target === e.currentTarget && handleCancel()}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+    >
+      <div className="w-[90%] max-w-lg bg-white rounded-2xl shadow-xl sm:w-full sm:mx-4">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+          <h2 className="text-xl font-semibold text-gray-900">Edit Participant</h2>
+          <button onClick={handleCancel} className="p-1 text-gray-500 hover:bg-gray-100 rounded-md">
             <X size={24} />
           </button>
         </div>
 
-        {/* 模态框内容 */}
-        <form onSubmit={handleSubmit} className="edit-modal-form">
-          {/* 姓名输入 */}
-          <div className="edit-form-group">
-            <label htmlFor="edit-name" className="edit-form-label">Name</label>
+        <form onSubmit={handleSubmit} className="p-6 space-y-5">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Name</label>
             <input
               id="edit-name"
-              type="text"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={e => setName(e.target.value)}
               placeholder="Enter name"
-              className={`edit-form-input ${errors.name ? 'edit-form-input-error' : ''}`}
+              className={`w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500
+                         ${errors.name ? 'border-red-500' : 'border-gray-300'}`}
             />
-            {errors.name && (
-              <span className="edit-form-error">{errors.name}</span>
-            )}
+            {errors.name && <p className="mt-1 text-xs text-red-600">{errors.name}</p>}
           </div>
 
-          {/* 邮箱输入 */}
-          <div className="edit-form-group">
-            <label htmlFor="edit-email" className="edit-form-label">Email</label>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
             <input
               id="edit-email"
               type="email"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={e => setEmail(e.target.value)}
               placeholder="Enter email"
-              className={`edit-form-input ${errors.email ? 'edit-form-input-error' : ''}`}
+              className={`w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500
+                         ${errors.email ? 'border-red-500' : 'border-gray-300'}`}
             />
-            {errors.email && (
-              <span className="edit-form-error">{errors.email}</span>
-            )}
+            {errors.email && <p className="mt-1 text-xs text-red-600">{errors.email}</p>}
           </div>
 
-          {/* 按钮组 */}
-          <div className="edit-modal-footer">
-            <button
-              type="button"
-              onClick={handleCancel}
-              className="edit-modal-button edit-modal-button-cancel"
-            >
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={handleCancel} className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">
               Cancel
             </button>
-            <button
-              type="submit"
-              className="edit-modal-button edit-modal-button-submit"
-            >
+            <button type="submit" className="flex-1 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 active:scale-95">
               Update
             </button>
           </div>

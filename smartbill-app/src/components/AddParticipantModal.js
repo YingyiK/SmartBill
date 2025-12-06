@@ -1,143 +1,84 @@
 import React, { useState } from 'react';
 import { X } from 'lucide-react';
-import './AddParticipantModal.css';
 
 const AddParticipantModal = ({ isOpen, onClose, onAdd }) => {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [errors, setErrors] = useState({});
 
-  // 如果模态框未打开，不渲染
   if (!isOpen) return null;
 
-  // 表单验证
-  const validateForm = () => {
-    const newErrors = {};
-
-    if (!name.trim()) {
-      newErrors.name = 'Name is required';
-    }
-
-    if (!email.trim()) {
-      newErrors.email = 'Email is required';
-    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      newErrors.email = 'Please enter a valid email';
-    }
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+  const validate = () => {
+    const e = {};
+    if (!name.trim()) e.name = 'Name is required';
+    if (!email.trim()) e.email = 'Email is required';
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) e.email = 'Invalid email';
+    setErrors(e);
+    return Object.keys(e).length === 0;
   };
 
-  // 处理提交
-  const handleSubmit = (e) => {
+  const handleSubmit = e => {
     e.preventDefault();
-    
-    if (validateForm()) {
-      // 生成随机颜色
-      const colors = ['#8B5CF6', '#6366F1', '#3B82F6', '#10B981', '#F59E0B', '#EF4444'];
-      const randomColor = colors[Math.floor(Math.random() * colors.length)];
-      
-      // 创建新参与者对象
-      const newParticipant = {
-        id: Date.now(),
-        name: name.trim(),
-        email: email.trim(),
-        avatar: name.trim().charAt(0).toUpperCase(),
-        color: randomColor,
-        status: 'Active participant',
-        notifications: true
-      };
-
-      // 调用父组件的添加函数
-      onAdd(newParticipant);
-
-      // 重置表单
-      setName('');
-      setEmail('');
-      setErrors({});
-
-      // 关闭模态框
-      onClose();
-    }
+    if (!validate()) return;
+    const colors = ['#8B5CF6', '#6366F1', '#3B82F6', '#10B981', '#F59E0B', '#EF4444'];
+    onAdd({
+      id: Date.now(),
+      name: name.trim(),
+      email: email.trim(),
+      avatar: name.trim()[0].toUpperCase(),
+      color: colors[Math.floor(Math.random() * colors.length)],
+      status: 'Active participant',
+      notifications: true,
+    });
+    setName(''); setEmail(''); setErrors({}); onClose();
   };
 
-  // 处理取消
-  const handleCancel = () => {
-    setName('');
-    setEmail('');
-    setErrors({});
-    onClose();
-  };
-
-  // 点击背景关闭
-  const handleBackdropClick = (e) => {
-    if (e.target.className === 'modal-backdrop') {
-      handleCancel();
-    }
-  };
+  const cancel = () => { setName(''); setEmail(''); setErrors({}); onClose(); };
 
   return (
-    <div className="modal-backdrop" onClick={handleBackdropClick}>
-      <div className="modal-container">
-        {/* 模态框头部 */}
-        <div className="modal-header">
-          <h2 className="modal-title">Add Participant</h2>
-          <button 
-            className="modal-close-button"
-            onClick={handleCancel}
-            type="button"
-          >
+    <div
+      onClick={e => e.target === e.currentTarget && cancel()}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+    >
+      <div className="w-[90%] max-w-lg bg-white rounded-2xl shadow-xl sm:w-full sm:mx-4">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+          <h2 className="text-xl font-semibold text-gray-900">Add Participant</h2>
+          <button onClick={cancel} className="p-1 text-gray-500 hover:bg-gray-100 rounded-md">
             <X size={24} />
           </button>
         </div>
 
-        {/* 模态框内容 */}
-        <form onSubmit={handleSubmit} className="modal-form">
-          {/* 姓名输入 */}
-          <div className="form-group">
-            <label htmlFor="name" className="form-label">Name</label>
+        <form onSubmit={handleSubmit} className="p-6 space-y-5">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Name</label>
             <input
-              id="name"
-              type="text"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={e => setName(e.target.value)}
               placeholder="Enter name"
-              className={`form-input ${errors.name ? 'form-input-error' : ''}`}
+              className={`w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500
+                         ${errors.name ? 'border-red-500' : 'border-gray-300'}`}
             />
-            {errors.name && (
-              <span className="form-error">{errors.name}</span>
-            )}
+            {errors.name && <p className="mt-1 text-xs text-red-600">{errors.name}</p>}
           </div>
 
-          {/* 邮箱输入 */}
-          <div className="form-group">
-            <label htmlFor="email" className="form-label">Email</label>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
             <input
-              id="email"
               type="email"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={e => setEmail(e.target.value)}
               placeholder="Enter email"
-              className={`form-input ${errors.email ? 'form-input-error' : ''}`}
+              className={`w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500
+                         ${errors.email ? 'border-red-500' : 'border-gray-300'}`}
             />
-            {errors.email && (
-              <span className="form-error">{errors.email}</span>
-            )}
+            {errors.email && <p className="mt-1 text-xs text-red-600">{errors.email}</p>}
           </div>
 
-          {/* 按钮组 */}
-          <div className="modal-footer">
-            <button
-              type="button"
-              onClick={handleCancel}
-              className="modal-button modal-button-cancel"
-            >
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={cancel} className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">
               Cancel
             </button>
-            <button
-              type="submit"
-              className="modal-button modal-button-submit"
-            >
+            <button type="submit" className="flex-1 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 active:scale-95">
               Add
             </button>
           </div>
