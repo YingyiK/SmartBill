@@ -122,14 +122,16 @@ async def get_current_user(
     user: dict = Depends(verify_token)
 ):
     """Get current user info"""
-    # Extract token from authorization header
-    token = authorization.split()[1] if authorization else ""
     
     async with httpx.AsyncClient() as client:
         try:
+            headers = {}
+            if authorization:
+                headers["Authorization"] = authorization
+
             response = await client.get(
                 f"{AUTH_SERVICE_URL}/me",
-                params={"token": token}
+                headers=headers
             )
             return response.json()
         except httpx.RequestError as e:
