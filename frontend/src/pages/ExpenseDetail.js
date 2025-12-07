@@ -3,16 +3,23 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Edit, Save, X, Trash2 } from 'lucide-react';
 import { expenseAPI } from '../services/api';
 
+const toNum = (v) => {
+  const n = Number(v);
+  return Number.isNaN(n) ? 0 : n;
+};
+
 const ExpenseDetail = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const [expense, setExpense] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [editing, setEditing] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState(null);
-  const [editedExpense, setEditedExpense] = useState(null);
 
+  const [expense, setExpense]           = useState(null);  
+  const [editedExpense, setEditedExpense] = useState(null); 
+  const [loading, setLoading]           = useState(true);
+  const [editing, setEditing]           = useState(false);
+  const [saving, setSaving]             = useState(false);
+  const [error, setError]               = useState(null);
+
+  /* 读取数据 */
   useEffect(() => {
     (async () => {
       setLoading(true);
@@ -30,11 +37,10 @@ const ExpenseDetail = () => {
     })();
   }, [id]);
 
+  /* 保存 */
   const handleSave = async () => {
     setSaving(true);
     try {
-      // TODO: implement updateExpense endpoint
-      // await expenseAPI.updateExpense(id, editedExpense);
       setExpense(editedExpense);
       setEditing(false);
       alert('Expense updated! (Full API pending)');
@@ -60,21 +66,33 @@ const ExpenseDetail = () => {
     }
   };
 
+  /* 行内项目变更 */
   const handleItemChange = (idx, field, val) => {
     const items = [...editedExpense.items];
-    items[idx][field] = field === 'price' ? parseFloat(val) || 0 : field === 'quantity' ? parseInt(val) || 1 : val;
+    if (field === 'price')       items[idx][field] = toNum(val);
+    else if (field === 'quantity') items[idx][field] = Math.max(1, parseInt(val, 10) || 1);
+    else                           items[idx][field] = val;
     setEditedExpense({ ...editedExpense, items });
   };
 
   const handleAddItem = () =>
-    setEditedExpense({ ...editedExpense, items: [...(editedExpense.items || []), { name: '', price: 0, quantity: 1 }] });
+    setEditedExpense({
+      ...editedExpense,
+      items: [...(editedExpense.items || []), { name: '', price: 0, quantity: 1 }],
+    });
 
   const handleRemoveItem = (idx) =>
-    setEditedExpense({ ...editedExpense, items: editedExpense.items.filter((_, i) => i !== idx) });
+    setEditedExpense({
+      ...editedExpense,
+      items: editedExpense.items.filter((_, i) => i !== idx),
+    });
 
+  /* 渲染加载 / 错误 */
   if (loading)
     return (
-      <div className="max-w-5xl mx-auto px-6 py-12 text-center text-gray-500">Loading expense...</div>
+      <div className="max-w-5xl mx-auto px-6 py-12 text-center text-gray-500">
+        Loading expense...
+      </div>
     );
 
   if (error && !expense)
@@ -91,7 +109,11 @@ const ExpenseDetail = () => {
       </div>
     );
 
+  /* 统一渲染源：编辑态用 editedExpense，只读态用 expense */
   const display = editing ? editedExpense : expense;
+
+  /* 工具函数：安全展示金额 */
+  const fmt = (v) => toNum(v).toFixed(2);
 
   return (
     <div className="max-w-5xl mx-auto px-6 py-8">
@@ -145,13 +167,18 @@ const ExpenseDetail = () => {
         </div>
       </div>
 
-      {error && <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 text-red-600 rounded-lg">{error}</div>}
+      {error && (
+        <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 text-red-600 rounded-lg">
+          {error}
+        </div>
+      )}
 
       <div className="space-y-6">
         {/* Details */}
         <section className="bg-white rounded-xl shadow p-6">
           <h2 className="text-xl font-bold text-gray-900 mb-4">Expense Details</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Store Name */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Store Name</label>
               {editing ? (
@@ -165,6 +192,7 @@ const ExpenseDetail = () => {
               )}
             </div>
 
+            {/* Total Amount */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Total Amount</label>
               {editing ? (
@@ -172,15 +200,18 @@ const ExpenseDetail = () => {
                   type="number"
                   step="0.01"
                   value={display.total_amount || ''}
-                  onChange={(e) => setEditedExpense({ ...editedExpense, total_amount: parseFloat(e.target.value) || 0 })}
+                  onChange={(e) =>
+                    setEditedExpense({ ...editedExpense, total_amount: toNum(e.target.value) })
+                  }
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               ) : (
-                <div className="text-gray-900 font-semibold">${display.total_amount?.toFixed(2) || '0.00'}</div>
+                <div className="text-gray-900 font-semibold">${fmt(display.total_amount)}</div>
               )}
             </div>
 
-            {display.subtotal && (
+            {/* Subtotal */}
+            {display.subtotal !== null && display.subtotal !== undefined && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Subtotal</label>
                 {editing ? (
@@ -188,16 +219,19 @@ const ExpenseDetail = () => {
                     type="number"
                     step="0.01"
                     value={display.subtotal || ''}
-                    onChange={(e) => setEditedExpense({ ...editedExpense, subtotal: parseFloat(e.target.value) || null })}
+                    onChange={(e) =>
+                      setEditedExpense({ ...editedExpense, subtotal: toNum(e.target.value) })
+                    }
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 ) : (
-                  <div className="text-gray-900">${display.subtotal.toFixed(2)}</div>
+                  <div className="text-gray-900">${fmt(display.subtotal)}</div>
                 )}
               </div>
             )}
 
-            {display.tax_amount && (
+            {/* Tax Amount */}
+            {display.tax_amount !== null && display.tax_amount !== undefined && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Tax Amount</label>
                 {editing ? (
@@ -205,21 +239,25 @@ const ExpenseDetail = () => {
                     type="number"
                     step="0.01"
                     value={display.tax_amount || ''}
-                    onChange={(e) => setEditedExpense({ ...editedExpense, tax_amount: parseFloat(e.target.value) || null })}
+                    onChange={(e) =>
+                      setEditedExpense({ ...editedExpense, tax_amount: toNum(e.target.value) })
+                    }
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 ) : (
-                  <div className="text-gray-900">${display.tax_amount.toFixed(2)}</div>
+                  <div className="text-gray-900">${fmt(display.tax_amount)}</div>
                 )}
               </div>
             )}
 
+            {/* Created At */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Created At</label>
               <div className="text-gray-900">{new Date(display.created_at).toLocaleString()}</div>
             </div>
           </div>
 
+          {/* Voice Transcript */}
           {display.transcript && (
             <div className="mt-4">
               <label className="block text-sm font-medium text-gray-700 mb-1">Voice Transcript</label>
@@ -247,7 +285,10 @@ const ExpenseDetail = () => {
           {display.items?.length ? (
             <div className="space-y-3">
               {display.items.map((item, idx) => (
-                <div key={idx} className="flex items-center gap-3 bg-gray-50 border border-gray-200 rounded-lg p-3">
+                <div
+                  key={idx}
+                  className="flex items-center gap-3 bg-gray-50 border border-gray-200 rounded-lg p-3"
+                >
                   {editing ? (
                     <>
                       <input
@@ -283,7 +324,9 @@ const ExpenseDetail = () => {
                     <>
                       <div className="flex-2 font-medium text-gray-900">{item.name}</div>
                       <div className="flex-1 text-gray-500">Qty: {item.quantity}</div>
-                      <div className="flex-1 font-semibold text-emerald-600 text-right">${item.price.toFixed(2)}</div>
+                      <div className="flex-1 font-semibold text-emerald-600 text-right">
+                        ${fmt(item.price)}
+                      </div>
                     </>
                   )}
                 </div>
@@ -297,12 +340,16 @@ const ExpenseDetail = () => {
         {/* Participants */}
         {display.participants?.length > 0 && (
           <section className="bg-white rounded-xl shadow p-6">
-            <h2 className="text-xl font-bold text-gray-900 mb-4">Participants ({display.participants.length})</h2>
+            <h2 className="text-xl font-bold text-gray-900 mb-4">
+              Participants ({display.participants.length})
+            </h2>
             <div className="space-y-3">
               {display.participants.map((p, i) => (
                 <div key={i} className="p-4 bg-gray-50 border border-gray-200 rounded-lg">
                   <div className="font-semibold text-gray-900">{p.name}</div>
-                  {p.items?.length > 0 && <div className="text-sm text-gray-500 mt-1">Items: {p.items.join(', ')}</div>}
+                  {p.items?.length > 0 && (
+                    <div className="text-sm text-gray-500 mt-1">Items: {p.items.join(', ')}</div>
+                  )}
                 </div>
               ))}
             </div>
