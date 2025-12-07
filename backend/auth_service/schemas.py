@@ -46,6 +46,7 @@ class TokenResponse(BaseModel):
 class UserResponse(BaseModel):
     id: str
     email: str
+    username: str
     email_verified: bool
     created_at: datetime
 

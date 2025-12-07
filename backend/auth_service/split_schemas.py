@@ -29,7 +29,7 @@ class ExpenseSplitResponse(BaseModel):
     participant_name: str
     participant_email: Optional[str]
     contact_id: Optional[str]
-    amount_owed: float
+    amount_owed: Decimal
     items_detail: Optional[str]
     is_paid: bool
     email_sent: bool
@@ -57,5 +57,6 @@ class SendBillResponse(BaseModel):
     sent_count: int
     failed_count: int
     results: List[dict]  # List of {participant_id, participant_name, status, message}
+
 
 

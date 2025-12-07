@@ -1,16 +1,17 @@
 """
 Pydantic schemas for expense API
 """
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
 from uuid import UUID
+from decimal import Decimal
 
 
 class ExpenseItemSchema(BaseModel):
     name: str
-    price: float
-    quantity: Optional[int] = 1
+    price: Decimal
+    quantity: Decimal = Decimal(1)
 
 
 class ExpenseParticipantSchema(BaseModel):
@@ -20,10 +21,10 @@ class ExpenseParticipantSchema(BaseModel):
 
 class CreateExpenseRequest(BaseModel):
     store_name: Optional[str] = None
-    total_amount: float
-    subtotal: Optional[float] = None
-    tax_amount: Optional[float] = None
-    tax_rate: Optional[float] = None
+    total_amount: Decimal
+    subtotal: Optional[Decimal] = None
+    tax_amount: Optional[Decimal] = None
+    tax_rate: Optional[Decimal] = None
     raw_text: Optional[str] = None
     transcript: Optional[str] = None
     items: List[ExpenseItemSchema] = []
@@ -34,10 +35,10 @@ class ExpenseResponse(BaseModel):
     id: str
     user_id: str
     store_name: Optional[str]
-    total_amount: float
-    subtotal: Optional[float]
-    tax_amount: Optional[float]
-    tax_rate: Optional[float]
+    total_amount: Decimal
+    subtotal: Optional[Decimal]
+    tax_amount: Optional[Decimal]
+    tax_rate: Optional[Decimal]
     raw_text: Optional[str]
     transcript: Optional[str]
     items: List[ExpenseItemSchema] = []
