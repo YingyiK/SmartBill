@@ -108,6 +108,7 @@ class AuthService {
   logout() {
     authAPI.logout();
     this.clearUserFromStorage();
+    window.location.href = '/login';
   }
 
   /**
