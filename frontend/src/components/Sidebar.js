@@ -1,4 +1,3 @@
-// Sidebar.js - 用户信息固定在底部
 import React from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { LayoutDashboard, Plus, Users, History, Settings, LogOut } from 'lucide-react';

@@ -1,4 +1,3 @@
-// PageHeader.js
 import React from 'react';
 
 const PageHeader = ({ title, subtitle }) => (

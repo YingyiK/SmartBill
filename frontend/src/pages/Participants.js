@@ -1,4 +1,3 @@
-// Participants.js  –  零 CSS 文件，纯 Tailwind
 import React, { useState, useEffect } from 'react';
 import {
   Users as UsersIcon, Mail, UserPlus, Trash2, Loader, FolderPlus, Edit2, X, Check

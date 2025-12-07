@@ -1,4 +1,3 @@
-// ParticipantCard.js
 import React from 'react';
 import { Edit2, Trash2, User, Mail } from 'lucide-react';
 
