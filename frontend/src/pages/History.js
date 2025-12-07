@@ -1,4 +1,4 @@
-// History.js  –  零 CSS 文件，纯 Tailwind
+
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import StatCard from '../components/StatCard';
@@ -45,7 +45,7 @@ const History = () => {
   // 统计数据
   const stats = {
     totalExpenses: expenses.length,
-    totalAmount: expenses.reduce((s, e) => s + (e.total_amount || 0), 0),
+    totalAmount: expenses.reduce((s, e) => s + Number(e.total_amount || 0), 0),
     uniqueParticipants: new Set(
       expenses.flatMap((e) => (e.participants || []).map((p) => p.name))
     ).size,
@@ -142,7 +142,7 @@ const History = () => {
                 {/* 头部 */}
                 <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 mb-3">
                   <h3 className="text-lg font-semibold text-gray-900">{exp.store_name || 'Unknown Store'}</h3>
-                  <span className="text-xl font-bold text-emerald-600">${exp.total_amount?.toFixed(2) || '0.00'}</span>
+                  <span className="text-xl font-bold text-emerald-600">${Number(exp.total_amount || 0).toFixed(2)}</span>
                 </div>
 
                 {/* 详情行 */}
