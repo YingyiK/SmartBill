@@ -111,51 +111,94 @@ class GeminiOCREngine:
             
             logger.info("Sending request to Gemini API...")
             
-            # Send request to Gemini API
-            response = requests.post(
-                f"{self.API_URL}?key={self.api_key}",
-                headers={"Content-Type": "application/json"},
-                json=payload,
-                timeout=60
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                
-                # Extract text from Gemini response
-                text = self._parse_gemini_response(result)
-                
-                logger.info(f"Successfully extracted {len(text)} characters")
-                return text.strip()
-                
-            elif response.status_code == 400:
-                error_detail = response.text
-                logger.error(f"Bad request: {error_detail}")
-                raise Exception(f"Gemini API error: Invalid request. {error_detail}")
-            elif response.status_code == 401:
-                logger.error("Unauthorized - check your API key")
-                raise Exception("Gemini API error: Invalid API key")
-            elif response.status_code == 404:
-                error_detail = response.text
-                logger.error(f"Model not found (404): {error_detail}")
-                raise Exception(
-                    f"Gemini model '{self.MODEL_NAME}' not found. "
-                    f"Please check available models at: https://ai.google.dev/models/gemini"
-                )
-            elif response.status_code == 429:
-                logger.error("Rate limit exceeded")
-                raise Exception("Gemini API error: Rate limit exceeded. Please try again later.")
-            else:
-                error_detail = response.text[:200] if response.text else "No error details"
-                logger.error(f"API error {response.status_code}: {error_detail}")
-                raise Exception(f"Gemini API error {response.status_code}: {error_detail}")
-                
-        except requests.exceptions.Timeout:
-            logger.error("Request timeout")
-            raise Exception("Request timeout")
+            import time
+            max_retries = 3
+            retry_delay = 2  # Start with 2 seconds
+
+            for attempt in range(max_retries):
+                try:
+                    # Send request to Gemini API
+                    response = requests.post(
+                        f"{self.API_URL}?key={self.api_key}",
+                        headers={"Content-Type": "application/json"},
+                        json=payload,
+                        timeout=60
+                    )
+                    
+                    if response.status_code == 200:
+                        result = response.json()
+                        text = self._parse_gemini_response(result)
+                        logger.info(f"Successfully extracted {len(text)} characters")
+                        return text.strip()
+                        
+                    elif response.status_code == 503:
+                        # Service unavailable / overloaded - Retry
+                        if attempt < max_retries - 1:
+                            logger.warning(f"Gemini API overloaded (503). Retrying in {retry_delay}s... (Attempt {attempt+1}/{max_retries})")
+                            time.sleep(retry_delay)
+                            retry_delay *= 2  # Exponential backoff
+                            continue
+                        else:
+                            raise Exception("Gemini API overloaded. Max retries exceeded.")
+                            
+                    elif response.status_code == 429:
+                        # Rate limit exceeded - Retry
+                        if attempt < max_retries - 1:
+                            logger.warning(f"Rate limit exceeded (429). Retrying in {retry_delay}s... (Attempt {attempt+1}/{max_retries})")
+                            time.sleep(retry_delay)
+                            retry_delay *= 2
+                            continue
+                        else:
+                            raise Exception("Rate limit exceeded. Please try again later.")
+
+                    elif response.status_code == 400:
+                        error_detail = response.text
+                        logger.error(f"Bad request: {error_detail}")
+                        raise Exception(f"Gemini API error: Invalid request. {error_detail}")
+                    elif response.status_code == 401:
+                        logger.error("Unauthorized - check your API key")
+                        raise Exception("Gemini API error: Invalid API key")
+                    elif response.status_code == 404:
+                        error_detail = response.text
+                        logger.error(f"Model not found (404): {error_detail}")
+                        raise Exception(
+                            f"Gemini model '{self.MODEL_NAME}' not found. "
+                            f"Please check available models at: https://ai.google.dev/models/gemini"
+                        )
+                    else:
+                        error_detail = response.text[:200] if response.text else "No error details"
+                        logger.error(f"API error {response.status_code}: {error_detail}")
+                        raise Exception(f"Gemini API error {response.status_code}: {error_detail}")
+
+                except requests.exceptions.Timeout:
+                    if attempt < max_retries - 1:
+                        logger.warning(f"Request timeout. Retrying in {retry_delay}s...")
+                        time.sleep(retry_delay)
+                        retry_delay *= 2
+                        continue
+                    logger.error("Request timeout")
+                    raise Exception("Request timeout")
+                except Exception as e:
+                    # Don't retry on other exceptions unless it's the last attempt
+                    if attempt == max_retries - 1:
+                        logger.error(f"OCR extraction failed: {str(e)}")
+                        raise
+                    # If it's a transient network error, maybe retry? 
+                    # For now, let's re-raise non-status-code errors immediately to fail fast on logic bugs
+                    if "API error" in str(e) or "overloaded" in str(e):
+                         raise # Re-raise known API errors that we already handled/retried logic for
+                    
+                    # For unexpected errors, maybe retry
+                    logger.warning(f"Unexpected error: {str(e)}. Retrying...")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2
+        
         except Exception as e:
-            logger.error(f"OCR extraction failed: {str(e)}")
+            # Catch-all for any errors outside the loop (shouldn't happen with current logic but good for safety)
+            logger.error(f"OCR extraction failed fatally: {str(e)}")
             raise
+
+
     
     def _parse_gemini_response(self, response_json):
         """

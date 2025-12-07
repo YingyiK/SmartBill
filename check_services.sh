@@ -41,3 +41,4 @@ echo "   3. Or run ./start_all_services.sh again"
 echo ""
 
 
+

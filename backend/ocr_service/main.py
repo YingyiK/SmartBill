@@ -109,6 +109,9 @@ async def upload_receipt(image: UploadFile = File(...)):
         engine = get_ocr_engine()
         raw_text = engine.extract_text(image_bytes)
         
+        # Log the raw text for debugging
+        logger.info(f"--- RAW TEXT START ---\n{raw_text}\n--- RAW TEXT END ---")
+        
         if not raw_text:
             return OCRResponse(
                 success=False,

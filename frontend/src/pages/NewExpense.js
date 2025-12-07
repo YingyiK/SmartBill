@@ -245,42 +245,186 @@ const handleRemoveItem = (idx) => {
   };
 
   /* ---------- Step 4 分摊 ---------- */
-  const addParticipant = (name) => {
-    if (!name || participants.includes(name)) return;
+  // We need a new state to hold the expanded items (where qty > 1 are split)
+  const [expandedItems, setExpandedItems] = useState([]);
+  
+  // Helper to expand items when entering Step 4
+  const prepareStep4Data = useCallback(() => {
+    if (!ocrResult?.items) return;
+    
+    const expanded = [];
+    ocrResult.items.forEach((item) => {
+      const qty = parseInt(item.quantity) || 1;
+      if (qty <= 1) {
+        expanded.push({ ...item, originalIndex: expanded.length }); // Use current length as unique ID for now
+      } else {
+        // Split item
+        const unitPrice = item.price; // Parser now guarantees this is unit price
+        for (let i = 0; i < qty; i++) {
+          expanded.push({
+            ...item,
+            name: `${item.name} (${i + 1}/${qty})`,
+            quantity: 1,
+            price: unitPrice,
+            originalIndex: expanded.length
+          });
+        }
+      }
+    });
+    setExpandedItems(expanded);
+    return expanded;
+  }, [ocrResult]);
+
+  const addParticipant = (name, assignedIndices = null) => {
+    if (!name) return;
     const key = name.toLowerCase().trim();
-    // 默认把当前全部商品索引分配给新参与者
-    const allIndices = ocrResult?.items?.map((_, idx) => idx) || [];
+    
+    // Prevent duplicates
+    if (participants.some(p => p.toLowerCase().trim() === key)) return;
+    
+    // Use current expandedItems state or the one passed if we are initializing
+    const targetItems = expandedItems.length > 0 ? expandedItems : (prepareStep4Data() || []);
+    
+    // Calculate indices. If assignedIndices is null, select ALL.
+    // Note: assignedIndices from STT will refer to ORIGINAL OCR items.
+    // We need to map them to EXPANDED items.
+    
+    let finalIndices = [];
+    
+    if (assignedIndices === null) {
+      // Manual add -> Select ALL expanded items
+      finalIndices = targetItems.map((_, idx) => idx);
+    } else {
+      // STT add -> map original indices to new expanded indices
+      // This is tricky because we don't have a direct map from STT.
+      // STT logic below uses name matching, so we should use that.
+      // Let's change STT logic to return expanded indices directly.
+      finalIndices = assignedIndices; 
+    }
+      
     setParticipants((prev) => [...prev, name]);
-    setItemAssignments((prev) => ({ ...prev, [key]: allIndices }));
+    setItemAssignments((prev) => ({ ...prev, [key]: finalIndices }));
   };
 
-  // 进入 Step4 时若空则自动创建"me"并全选
-  useEffect(() => {
-    if (activeStep === 4 && participants.length === 0) {
-      addParticipant('me');
-    }
-  }, [activeStep, participants.length]);
+  // Remove the old useEffect for "me"
+  // useEffect(() => { ... }, [activeStep, participants.length, step4Initialized]);
 
   const initializeStep4Participants = useCallback(() => {
-    if (selectedGroupId) {
-      const group = contactGroups.find((g) => g.id === selectedGroupId);
-      if (group?.members) {
-        const names = group.members.map((m) => m.contact_nickname || m.contact_email.split('@')[0]);
-        names.forEach(addParticipant);
-        return;
-      }
-    }
+    // If we already have participants, don't re-initialize to avoid duplicates/reset
+    if (participants.length > 0) return;
+
+    const currentExpandedItems = prepareStep4Data();
+    if (!currentExpandedItems) return;
+
+    let initialized = false;
+    const currentUser = authService.getCurrentUser();
+    const currentUserName = currentUser?.email?.split('@')[0] || 'me';
+
+    // 1. Try STT Participants first (highest priority for item mapping)
     if (sttResult?.participants?.length) {
-      const names = sttResult.participants.map((p) => p.name.toLowerCase().trim());
-      names.forEach(addParticipant);
+      const assignedItemIndices = new Set();
+      
+      // Temporary storage for participants and their initial specific assignments
+      const initialAssignments = {};
+
+      sttResult.participants.forEach(p => {
+        const name = p.name.trim();
+        const key = name.toLowerCase().trim();
+        const matchedIndices = [];
+        
+        // Map STT item names to OCR item indices
+        if (p.items && p.items.length > 0) {
+          p.items.forEach(sttItemName => {
+            // Fuzzy match against EXPANDED items
+            // Note: expanded item name might be "Apple (1/2)"
+            // We check if the base name matches
+            currentExpandedItems.forEach((exItem, idx) => {
+               // Remove the (1/2) suffix for matching if present
+               const baseName = exItem.name.replace(/\s\(\d+\/\d+\)$/, '');
+               if (
+                 baseName === sttItemName || 
+                 baseName.includes(sttItemName) || 
+                 sttItemName.includes(baseName)
+               ) {
+                 matchedIndices.push(idx);
+                 assignedItemIndices.add(idx);
+               }
+            });
+          });
+        }
+        initialAssignments[key] = matchedIndices;
+      });
+
+      // Find all items that were NOT assigned to anyone
+      const unassignedIndices = currentExpandedItems
+        .map((_, idx) => idx)
+        .filter(idx => !assignedItemIndices.has(idx));
+
+      // Now add all participants with their specific items + shared unassigned items
+      sttResult.participants.forEach(p => {
+        const name = p.name.trim();
+        const key = name.toLowerCase().trim();
+        // specific items for this person
+        const specificIndices = initialAssignments[key] || [];
+        // Merge specific items + ALL unassigned items (shared split)
+        const finalIndices = [...specificIndices, ...unassignedIndices];
+        
+        // Remove duplicates just in case and sort
+        const uniqueIndices = [...new Set(finalIndices)].sort((a, b) => a - b);
+        
+        addParticipant(name, uniqueIndices);
+      });
+      
+      // Ensure "me" is added if not present in STT
+      const meKey = currentUserName.toLowerCase();
+      const isMePresent = sttResult.participants.some(p => p.name.toLowerCase().trim() === meKey);
+      
+      if (!isMePresent) {
+        // "Me" gets shared items (unassigned)
+        addParticipant(currentUserName, unassignedIndices);
+      }
+      
+      initialized = true;
     }
-  }, [selectedGroupId, contactGroups, sttResult, ocrResult]);
+    
+    // 2. If no STT participants, check Groups
+    if (!initialized) {
+      let membersToAdd = [];
+      
+      if (selectedGroupId) {
+        const group = contactGroups.find((g) => g.id === selectedGroupId);
+        if (group?.members) {
+          membersToAdd = group.members.map((m) => m.contact_nickname || m.contact_email.split('@')[0]);
+        }
+      }
+      
+      // Ensure "me" is in the list
+      if (!membersToAdd.some(n => n.toLowerCase() === currentUserName.toLowerCase())) {
+        membersToAdd.push(currentUserName);
+      }
+      
+      // Add everyone, assigning ALL expanded items (split equally)
+      const allIndices = currentExpandedItems.map((_, i) => i);
+      membersToAdd.forEach(name => addParticipant(name, allIndices));
+    }
+    
+  }, [selectedGroupId, contactGroups, sttResult, ocrResult, participants.length]); // Added participants.length dependency
 
   useEffect(() => {
     if (activeStep === 4 && !step4Initialized) {
       initializeStep4Participants();
       setStep4Initialized(true);
-    } else if (activeStep !== 4) setStep4Initialized(false);
+    } else if (activeStep !== 4) {
+        // Do NOT reset step4Initialized to false when leaving step 4.
+        // This prevents re-initialization when coming back from Step 5 (Summary).
+        // Only reset if we go back to Step 1 or 2 where data changes.
+        if (activeStep < 3) {
+             setStep4Initialized(false);
+             setParticipants([]);
+             setItemAssignments({});
+             setExpandedItems([]);
+        }
+    }
   }, [activeStep, step4Initialized, initializeStep4Participants]);
 
   /* ---------- Step 5 保存 ---------- */
@@ -289,12 +433,21 @@ const handleRemoveItem = (idx) => {
     setLoading(true);
     setError(null);
     try {
+      // Use expandedItems for final submission if available
+      const finalItems = expandedItems.length > 0 ? expandedItems : (ocrResult.items || []);
+      
       const participantsData = participants.map((name) => {
         const key = name.toLowerCase().trim();
         const indices = itemAssignments[key] || [];
-        const items = indices.map((i) => ocrResult.items[i]).filter(Boolean);
+        // Map indices to items from the expanded list
+        const items = indices.map((i) => finalItems[i]).filter(Boolean);
         return { name, items: items.map((it) => it.name) };
       });
+      
+      // When saving, we should save the simplified/collapsed items list to the DB
+      // but with participants mapped correctly.
+      // However, for splitting accuracy, saving the expanded items as the official items list is better.
+      
       await expenseAPI.createExpense({
         store_name: ocrResult.store_name || null,
         total_amount: ocrResult.total || 0,
@@ -303,7 +456,11 @@ const handleRemoveItem = (idx) => {
         tax_rate: ocrResult.tax_rate || null,
         raw_text: ocrResult.raw_text || null,
         transcript: transcript || null,
-        items: (ocrResult.items || []).map((it) => ({ name: it.name, price: it.price, quantity: it.quantity || 1 })),
+        items: finalItems.map((it) => ({ 
+            name: it.name, 
+            price: it.price, 
+            quantity: 1 // Always 1 for expanded items
+        })),
         participants: participantsData,
       });
       // 成功后跳转到 dashboard
@@ -322,14 +479,17 @@ const handleRemoveItem = (idx) => {
 
   /* ---------- 每人应付金额计算 ---------- */
   const perPersonTotal = React.useMemo(() => {
-    if (!ocrResult?.items) return {};
+    // Use expanded items if available
+    const itemsToUse = expandedItems.length > 0 ? expandedItems : (ocrResult?.items || []);
+    if (!itemsToUse || itemsToUse.length === 0) return {};
+    
     const res = {};
     participants.forEach((p) => {
       const key = p.toLowerCase().trim();
       const indices = itemAssignments[key] || [];
       let sum = 0;
       indices.forEach((itemIdx) => {
-        const item = ocrResult.items[itemIdx];
+        const item = itemsToUse[itemIdx];
         if (!item) return;
         const shareCount = participants.filter((pp) => {
           const ppKey = pp.toLowerCase().trim();
@@ -340,7 +500,8 @@ const handleRemoveItem = (idx) => {
       res[p] = sum.toFixed(2);
     });
     return res;
-  }, [participants, itemAssignments, ocrResult]);
+  }, [participants, itemAssignments, ocrResult, expandedItems]);
+
 
 
   /* ************************************************ */
@@ -789,10 +950,12 @@ const handleRemoveItem = (idx) => {
                         {(() => {
                           const key = participant.toLowerCase().trim();
                           const indices = itemAssignments[key] || [];
+                          const itemsToUse = expandedItems.length > 0 ? expandedItems : (ocrResult?.items || []);
+                          
                           return indices.length > 0 ? (
                             <ul className="space-y-1">
                               {indices.map((itemIdx) => {
-                                const item = ocrResult.items[itemIdx];
+                                const item = itemsToUse[itemIdx];
                                 if (!item) return null;
                                 const shareCount = participants.filter((pp) => {
                                   const ppKey = pp.toLowerCase().trim();
@@ -814,10 +977,12 @@ const handleRemoveItem = (idx) => {
                         {(() => {
                           const key = participant.toLowerCase().trim();
                           const indices = itemAssignments[key] || [];
+                          const itemsToUse = expandedItems.length > 0 ? expandedItems : (ocrResult?.items || []);
+                          
                           return indices.length > 0 && (
                             <div className="pt-2 border-t border-gray-200 text-sm">
                               <strong>Total: ${(indices.reduce((sum, itemIdx) => {
-                                const item = ocrResult.items[itemIdx];
+                                const item = itemsToUse[itemIdx];
                                 if (!item) return sum;
                                 const shareCount = participants.filter((pp) => {
                                   const ppKey = pp.toLowerCase().trim();
@@ -836,11 +1001,11 @@ const handleRemoveItem = (idx) => {
             )}
 
             {/* 商品分配区域 */}
-            {ocrResult && ocrResult.items && ocrResult.items.length > 0 && (
+            {expandedItems.length > 0 ? (
               <div className="space-y-4">
-                <h4 className="text-lg font-semibold">Items ({ocrResult.items.length})</h4>
+                <h4 className="text-lg font-semibold">Items ({expandedItems.length})</h4>
                 <div className="space-y-4">
-                  {ocrResult.items.map((item, itemIdx) => {
+                  {expandedItems.map((item, itemIdx) => {
                     const assignedTo = participants.filter((p) => {
                       const pKey = p.toLowerCase().trim();
                       return itemAssignments[pKey] && itemAssignments[pKey].includes(itemIdx);
@@ -900,7 +1065,7 @@ const handleRemoveItem = (idx) => {
                   })}
                 </div>
               </div>
-            )}
+            ) : null}
 
             {/* 下一步 */}
             <div className="text-center flex items-center justify-center gap-3">
