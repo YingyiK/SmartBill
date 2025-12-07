@@ -1,4 +1,3 @@
-// NewExpense.js  –  纯 Tailwind，零 CSS
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Mic, MicOff } from 'lucide-react';
