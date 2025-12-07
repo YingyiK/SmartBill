@@ -171,7 +171,7 @@ export default function Dashboard() {
                           <span>{new Date(exp.created_at).toLocaleDateString()}</span>
                           {exp.items?.length > 0 && <span>{exp.items.length} items</span>}
                           {exp.transcript && (
-                            <span className="italic text-gray-400">💬 {exp.transcript.slice(0, 50)}…</span>
+                            <span className="italic text-gray-400"> {exp.transcript.slice(0, 50)}…</span>
                           )}
                         </div>
                       </div>
