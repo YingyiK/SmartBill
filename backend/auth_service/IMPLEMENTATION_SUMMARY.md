@@ -334,3 +334,4 @@ You now have a **complete expense splitting system** with:
 All that's left is to connect the frontend! 🎉
 
 
+

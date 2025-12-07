@@ -5,10 +5,13 @@ from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Numeric, U
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func
+from sqlalchemy.orm import relationship
 import uuid
 
 Base = declarative_base()
 
+
+from sqlalchemy.orm import relationship
 
 class User(Base):
     __tablename__ = "users"
@@ -19,6 +22,11 @@ class User(Base):
     email_verified = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    # Relationships
+    expenses = relationship("Expense", back_populates="user", cascade="all, delete-orphan")
+    contacts = relationship("Contact", foreign_keys="[Contact.user_id]", back_populates="user", cascade="all, delete-orphan")
+    contact_groups = relationship("ContactGroup", back_populates="user", cascade="all, delete-orphan")
 
 
 class EmailVerificationCode(Base):
@@ -59,6 +67,12 @@ class Expense(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
+    # Relationships
+    user = relationship("User", back_populates="expenses")
+    items = relationship("ExpenseItem", back_populates="expense", cascade="all, delete-orphan")
+    participants = relationship("ExpenseParticipant", back_populates="expense", cascade="all, delete-orphan")
+    splits = relationship("ExpenseSplit", back_populates="expense", cascade="all, delete-orphan")
+
 
 class ExpenseItem(Base):
     __tablename__ = "expense_items"
@@ -70,6 +84,9 @@ class ExpenseItem(Base):
     quantity = Column(Numeric(10, 2), default=1, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+    # Relationships
+    expense = relationship("Expense", back_populates="items")
+
 
 class ExpenseParticipant(Base):
     __tablename__ = "expense_participants"
@@ -80,27 +97,8 @@ class ExpenseParticipant(Base):
     items = Column(String, nullable=True)  # JSON string of items
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-
-class Group(Base):
-    __tablename__ = "groups"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
-    name = Column(String(255), nullable=False)
-    description = Column(String, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-
-
-class GroupMember(Base):
-    __tablename__ = "group_members"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id", ondelete="CASCADE"), nullable=False, index=True)
-    name = Column(String(255), nullable=False)
-    email = Column(String(255), nullable=True)  # Optional email for future use
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-
+    # Relationships
+    expense = relationship("Expense", back_populates="participants")
 
 class Contact(Base):
     """User's contact list (friends who are registered users)"""
@@ -111,6 +109,10 @@ class Contact(Base):
     friend_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
     nickname = Column(String(255), nullable=True)  # Optional nickname/note
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    user = relationship("User", foreign_keys=[user_id], back_populates="contacts")
+    friend_user = relationship("User", foreign_keys=[friend_user_id])
 
 
 class ContactGroup(Base):
@@ -123,6 +125,10 @@ class ContactGroup(Base):
     description = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    # Relationships
+    user = relationship("User", back_populates="contact_groups")
+    members = relationship("ContactGroupMember", back_populates="group", cascade="all, delete-orphan")
 
 
 class ContactGroupMember(Base):
@@ -138,6 +144,10 @@ class ContactGroupMember(Base):
     __table_args__ = (
         UniqueConstraint('group_id', 'contact_id', name='_contact_group_uc'),
     )
+
+    # Relationships
+    group = relationship("ContactGroup", back_populates="members")
+    contact = relationship("Contact")
 
 
 class ExpenseSplit(Base):
@@ -156,4 +166,8 @@ class ExpenseSplit(Base):
     email_sent_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    # Relationships
+    expense = relationship("Expense", back_populates="splits")
+    contact = relationship("Contact")
 
