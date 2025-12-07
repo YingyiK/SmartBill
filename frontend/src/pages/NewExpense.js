@@ -306,25 +306,30 @@ const handleRemoveItem = (idx) => {
     setItemAssignments((prev) => ({ ...prev, [key]: finalIndices }));
   };
 
-  // Remove the old useEffect for "me"
-  // useEffect(() => { ... }, [activeStep, participants.length, step4Initialized]);
-
+  /* ----- FUSED LOGIC: STT + ME(YOU) MAPPING ----- */
   const initializeStep4Participants = useCallback(() => {
-    // If we already have participants, don't re-initialize to avoid duplicates/reset
     if (participants.length > 0) return;
 
     const currentExpandedItems = prepareStep4Data();
     if (!currentExpandedItems) return;
 
-    let initialized = false;
     const currentUser = authService.getCurrentUser();
-    const currentUserName = currentUser?.email?.split('@')[0] || 'me';
+    const currentUserName = currentUser?.email ? currentUser.email.split('@')[0] : 'me';
+    const currentUserEmail = currentUser?.email?.toLowerCase();
 
-    // 1. Try STT Participants first (highest priority for item mapping)
+    // Helper to add participant (to avoid duplicates locally)
+    let initializedParticipants = [];
+    const addParticipantLocal = (name, itemIndices) => {
+        if (initializedParticipants.includes(name)) return;
+        initializedParticipants.push(name);
+        addParticipant(name, itemIndices);
+    };
+
+    let initialized = false;
+
+    // STRATEGY 1: STT Participants
     if (sttResult?.participants?.length) {
       const assignedItemIndices = new Set();
-      
-      // Temporary storage for participants and their initial specific assignments
       const initialAssignments = {};
 
       sttResult.participants.forEach(p => {
@@ -332,19 +337,14 @@ const handleRemoveItem = (idx) => {
         const key = name.toLowerCase().trim();
         const matchedIndices = [];
         
-        // Map STT item names to OCR item indices
         if (p.items && p.items.length > 0) {
           p.items.forEach(sttItemName => {
-            // Fuzzy match against EXPANDED items
-            // Note: expanded item name might be "Apple (1/2)"
-            // We check if the base name matches
             currentExpandedItems.forEach((exItem, idx) => {
-               // Remove the (1/2) suffix for matching if present
                const baseName = exItem.name.replace(/\s\(\d+\/\d+\)$/, '');
                if (
-                 baseName === sttItemName || 
-                 baseName.includes(sttItemName) || 
-                 sttItemName.includes(baseName)
+                 baseName.toLowerCase() === sttItemName.toLowerCase() || 
+                 baseName.toLowerCase().includes(sttItemName.toLowerCase()) || 
+                 sttItemName.toLowerCase().includes(baseName.toLowerCase())
                ) {
                  matchedIndices.push(idx);
                  assignedItemIndices.add(idx);
@@ -355,69 +355,73 @@ const handleRemoveItem = (idx) => {
         initialAssignments[key] = matchedIndices;
       });
 
-      // Find all items that were NOT assigned to anyone
       const unassignedIndices = currentExpandedItems
         .map((_, idx) => idx)
         .filter(idx => !assignedItemIndices.has(idx));
 
-      // Now add all participants with their specific items + shared unassigned items
       sttResult.participants.forEach(p => {
         const name = p.name.trim();
         const key = name.toLowerCase().trim();
-        // specific items for this person
-        const specificIndices = initialAssignments[key] || [];
-        // Merge specific items + ALL unassigned items (shared split)
-        const finalIndices = [...specificIndices, ...unassignedIndices];
         
-        // Remove duplicates just in case and sort
+        let displayName = name;
+        if (key === 'me' || key === currentUserName.toLowerCase() || (currentUserEmail && key === currentUserEmail)) {
+             displayName = 'me (You)';
+        }
+
+        const specificIndices = initialAssignments[key] || [];
+        const finalIndices = [...specificIndices, ...unassignedIndices];
         const uniqueIndices = [...new Set(finalIndices)].sort((a, b) => a - b);
         
-        addParticipant(name, uniqueIndices);
+        addParticipantLocal(displayName, uniqueIndices);
       });
       
-      // Ensure "me" is added if not present in STT
-      const meKey = currentUserName.toLowerCase();
-      const isMePresent = sttResult.participants.some(p => p.name.toLowerCase().trim() === meKey);
-      
+      const isMePresent = initializedParticipants.some(p => p === 'me (You)' || p.toLowerCase() === 'me');
       if (!isMePresent) {
-        // "Me" gets shared items (unassigned)
-        addParticipant(currentUserName, unassignedIndices);
+        addParticipantLocal('me (You)', unassignedIndices);
       }
       
       initialized = true;
     }
     
-    // 2. If no STT participants, check Groups
+    // STRATEGY 2: Group Selection
+    if (!initialized && selectedGroupId) {
+       const group = contactGroups.find((g) => g.id === selectedGroupId);
+       if (group?.members) {
+           const allIndices = currentExpandedItems.map((_, i) => i);
+           let foundCurrentUser = false;
+
+           group.members.forEach((member) => {
+               const memberEmail = member.contact_email?.toLowerCase();
+               const memberName = member.contact_nickname || member.contact_email.split('@')[0];
+               
+               if (memberEmail === currentUserEmail) {
+                   addParticipantLocal('me (You)', allIndices);
+                   foundCurrentUser = true;
+               } else {
+                   addParticipantLocal(memberName, allIndices);
+               }
+           });
+
+           if (!foundCurrentUser) {
+               addParticipantLocal('me (You)', allIndices);
+           }
+           initialized = true;
+       }
+    }
+
+    // STRATEGY 3: Fallback
     if (!initialized) {
-      let membersToAdd = [];
-      
-      if (selectedGroupId) {
-        const group = contactGroups.find((g) => g.id === selectedGroupId);
-        if (group?.members) {
-          membersToAdd = group.members.map((m) => m.contact_nickname || m.contact_email.split('@')[0]);
-        }
-      }
-      
-      // Ensure "me" is in the list
-      if (!membersToAdd.some(n => n.toLowerCase() === currentUserName.toLowerCase())) {
-        membersToAdd.push(currentUserName);
-      }
-      
-      // Add everyone, assigning ALL expanded items (split equally)
-      const allIndices = currentExpandedItems.map((_, i) => i);
-      membersToAdd.forEach(name => addParticipant(name, allIndices));
+        const allIndices = currentExpandedItems.map((_, i) => i);
+        addParticipantLocal('me (You)', allIndices);
     }
     
-  }, [selectedGroupId, contactGroups, sttResult, ocrResult, participants.length]); // Added participants.length dependency
+  }, [selectedGroupId, contactGroups, sttResult, ocrResult, participants.length]);
 
   useEffect(() => {
     if (activeStep === 4 && !step4Initialized) {
       initializeStep4Participants();
       setStep4Initialized(true);
     } else if (activeStep !== 4) {
-        // Do NOT reset step4Initialized to false when leaving step 4.
-        // This prevents re-initialization when coming back from Step 5 (Summary).
-        // Only reset if we go back to Step 1 or 2 where data changes.
         if (activeStep < 3) {
              setStep4Initialized(false);
              setParticipants([]);
@@ -505,7 +509,7 @@ const handleRemoveItem = (idx) => {
 
 
   /* ************************************************ */
-  /*                      UI 渲染                      */
+  /* UI 渲染                      */
   /* ************************************************ */
   return (
     <div className="max-w-7xl mx-auto px-16">
