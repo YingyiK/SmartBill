@@ -17,7 +17,7 @@ class ReceiptParser:
     # Common store names for detection
     STORE_PATTERNS = [
         r'COSTCO', r'WALMART', r'TARGET', r'WHOLE\s*FOODS',
-        r'TRADER\s*JOE', r'SAFEWAY', r'KROGER', r'PUBLIX'
+        r'TRADER\s*JOE', r'SAFEWAY', r'KROGER', r'PUBLIX', r'SPROUTS'
     ]
     
     # Price patterns (matches $12.99, 12.99, $12.99-, etc.)
@@ -63,6 +63,9 @@ class ReceiptParser:
         # Handle escaped newlines (handle both \\\\n and \\n)
         raw_text = raw_text.replace('\\\\n', '\n').replace('\\n', '\n')
         
+        # Preprocess text to fix common layout issues (like Sprouts misaligned prices)
+        raw_text = cls._fix_sprouts_misalignment(raw_text)
+        
         # Detect store name
         store_name = cls._extract_store_name(raw_text)
         
@@ -73,6 +76,88 @@ class ReceiptParser:
         total = cls._extract_total(raw_text)
         
         return items, total, store_name
+
+    @classmethod
+    def _fix_sprouts_misalignment(cls, text: str) -> str:
+        """
+        Fix specific line misalignment issues seen in Sprouts receipts
+        where prices shift to the previous line (or category line)
+        
+        Example issue:
+        GROCERY 2.00
+        CHOC PB PROTEIN
+        1 @ 2 FOR 4.00 2.25
+        DRINK-SPRNG-PRBTC-
+        
+        Should be:
+        GROCERY
+        CHOC PB PROTEIN 2.00
+        1 @ 2 FOR 4.00
+        DRINK-SPRNG-PRBTC- 2.25
+        """
+        lines = text.split('\n')
+        new_lines = []
+        
+        # Buffer to hold a price that needs to be moved to the next valid item line
+        floating_price = None
+        
+        for i, line in enumerate(lines):
+            line = line.strip()
+            if not line:
+                new_lines.append(line)
+                continue
+            
+            # Skip metadata lines from processing, just append them
+            if cls._is_metadata_line(line) and not cls._looks_like_item_name(line):
+                new_lines.append(line)
+                continue
+
+            # Regex to capture a price at the end of the line
+            # Matches: "TEXT 2.00" -> group 1: "TEXT", group 2: "2.00", group 3: flag
+            # Be careful not to match "1 @ 2 FOR 4.00" as a price line (4.00 is part of desc)
+            price_match = re.search(r'^(.*?)\s+(\d+\.\d{2})\s*([T|X|N]?)$', line)
+            
+            # Check for Sprouts specific category lines
+            is_category = line.split()[0] in ['GROCERY', 'VITAMINS', 'PRODUCE', 'MEAT', 'DAIRY', 'BAKERY', 'BODY', 'CARE']
+            
+            # Check for discount lines (e.g. "1 @ 2 FOR 4.00")
+            is_discount = '@' in line and 'FOR' in line
+            
+            if price_match:
+                content = price_match.group(1).strip()
+                price = price_match.group(2)
+                flag = price_match.group(3)
+                
+                # Case 1: Category line with a price (e.g., "GROCERY 2.00")
+                # The price 2.00 actually belongs to the NEXT item
+                if is_category:
+                    new_lines.append(content) # Keep "GROCERY"
+                    floating_price = f"{price} {flag}".strip() # Save "2.00" for later
+                    continue
+                    
+                # Case 2: Discount line with a price (e.g., "1 @ 2 FOR 4.00 2.25")
+                # The price 2.25 belongs to the NEXT item
+                if is_discount:
+                     new_lines.append(content) # Keep "1 @ 2 FOR 4.00"
+                     floating_price = f"{price} {flag}".strip()
+                     continue
+            
+            # If we have a floating price and this line looks like an item (and doesn't have a price)
+            if floating_price:
+                # Check if this line already has a price at the end
+                has_price = re.search(r'\d+\.\d{2}\s*[T|X|N]?$', line)
+                
+                # Don't attach to discount lines or categories
+                if not has_price and not is_discount and not is_category:
+                    # Append the floating price to this line
+                    new_lines.append(f"{line} {floating_price}")
+                    floating_price = None
+                    continue
+            
+            # Default: just keep the line
+            new_lines.append(line)
+            
+        return '\n'.join(new_lines)
     
     @classmethod
     def _extract_store_name(cls, text: str) -> Optional[str]:
@@ -229,21 +314,48 @@ class ReceiptParser:
                 i += 1
                 continue
             
-            # Skip discount/promotion lines (e.g., "1 @ 2 FOR 4.00" or "1 @ 4 FOR 9.00")
-            if re.match(r'^\d+\s*@\s*\d+\s+FOR\s+\d+\.\d{2}', line):
+            # Check if this is a discount/promotion line (e.g., "1 @ 2 FOR 4.00" or "1 @ 4 FOR 9.00")
+            # We want to extract the quantity "1" if possible and update the previous item
+            discount_match = re.match(r'^(\d+)\s*@\s*\d+\s+FOR\s+\d+\.\d{2}', line)
+            if discount_match:
+                if items:
+                    quantity = int(discount_match.group(1))
+                    items[-1].quantity = quantity
+                    # The previous item's price might be a total price now because of quantity > 1
+                    # Recalculate unit price
+                    if quantity > 1 and items[-1].price > 0:
+                        items[-1].price = round(items[-1].price / quantity, 2)
                 i += 1
                 continue
             
-            # Check if this is a CRV line (e.g., "*CRV FS/TX 05 0.05 T")
-            crv_match = re.search(r'\*CRV.*?(\d+\.\d{2})\s*([TXN]?)', line.upper())
+            # Check if this is a CRV line (e.g., "*CRV FS/TX 05 0.05 T" or "CRV FS/TX 05")
+            # Force standard CRV amount if line matches standard pattern but amount is missing/wrong due to OCR issues
+            # Updated regex to match CRV with or without leading asterisk
+            crv_match = re.search(r'\*?CRV\s+FS/TX\s+05.*?(\d+\.\d{2})?\s*([TXN]?)', line.upper())
+            
+            # Special handling for Sprouts CRV misaligned lines where price might be missing
+            # If we see "*CRV FS/TX 05" (with or without asterisk) but no price, assume it's 0.05
+            if not crv_match or not crv_match.group(1):
+                 if "CRV FS/TX 05" in line.upper():
+                     # Force it to be treated as a valid match with 0.05
+                     # Create a dummy match object-like structure
+                     class DummyMatch:
+                         def group(self, i):
+                             return "0.05" if i == 1 else "T" # Default to Taxable
+                     crv_match = DummyMatch()
+
             if crv_match:
                 # This is a CRV fee line, attach to the previous item
+                # DO NOT add CRV as a separate item, but add its cost to the previous item
                 if items:
                     crv_amount = float(crv_match.group(1))
                     crv_tax_indicator = crv_match.group(2) if crv_match.group(2) else None
                     
                     # Get the last item's base price (should not have tax applied yet)
-                    item_base_price = items[-1].price
+                    # Note: We need to handle if price was already converted to unit price
+                    item_quantity = items[-1].quantity
+                    item_unit_price = items[-1].price
+                    item_base_total_price = item_unit_price * item_quantity
                     
                     # Check if the item line had T/X indicator
                     item_tax_indicator = None
@@ -254,9 +366,9 @@ class ReceiptParser:
                             item_tax_indicator = item_tax_match.group(1)
                     
                     # Calculate item price with tax (if needed)
-                    item_price_with_tax = item_base_price
+                    item_total_with_tax = item_base_total_price
                     if item_tax_indicator in ['T', 'X'] and tax_rate_multiplier:
-                        item_price_with_tax = item_base_price * tax_rate_multiplier
+                        item_total_with_tax = item_base_total_price * tax_rate_multiplier
                     
                     # Calculate CRV with tax (if needed)
                     crv_with_tax = crv_amount
@@ -264,25 +376,39 @@ class ReceiptParser:
                         crv_with_tax = crv_amount * tax_rate_multiplier
                     
                     # Total = item (with tax if needed) + CRV (with tax if needed)
-                    total_price = item_price_with_tax + crv_with_tax
+                    final_total_price = item_total_with_tax + crv_with_tax
                     
-                    items[-1].price = round(total_price, 2)
+                    # Update price to be unit price
+                    if item_quantity > 1:
+                        items[-1].price = round(final_total_price / item_quantity, 2)
+                    else:
+                        items[-1].price = round(final_total_price, 2)
                 i += 1
-                continue
-            
+                continue # Skip adding CRV as a new item
+                
             # Check if this is a quantity line (e.g., "2 @ 3.99")
-            quantity_price_match = re.match(r'^(\d+)\s*@\s*(\d+\.\d{2})\s*$', line)
+            # Updated regex to be more permissive at the end (allow tax flags or trailing spaces)
+            quantity_price_match = re.match(r'^(\d+)\s*@\s*(\d+\.\d{2}).*?([XNT])?$', line)
             if quantity_price_match:
                 # This is a quantity/price line, update the previous item
                 if items:
                     quantity = int(quantity_price_match.group(1))
                     unit_price = float(quantity_price_match.group(2))
                     items[-1].quantity = quantity
-                    items[-1].price = round(unit_price * quantity, 2)
+                    # Since we have the explicit unit price here, use it directly!
+                    # No need to divide total by quantity
+                    
+                    # Handle tax flag if present in this line
+                    tax_flag = quantity_price_match.group(3)
+                    if tax_flag in ['X', 'T'] and tax_rate_multiplier:
+                        unit_price = unit_price * tax_rate_multiplier
+                        
+                    items[-1].price = round(unit_price, 2)
                 i += 1
                 continue
-            
-            # Try to find price in current line
+
+                
+                # Try to find price in current line
             price_match = re.search(cls.PRICE_PATTERN, line)
             tax_indicator = None
             
@@ -347,11 +473,23 @@ class ReceiptParser:
                         if '*CRV' not in next_line_check:
                             # No CRV follows, apply tax now if needed
                             if tax_indicator in ['X', 'T'] and tax_rate_multiplier:
-                                items[-1].price = round(price * tax_rate_multiplier, 2)
+                                price = price * tax_rate_multiplier
+                            
+                            # Calculate UNIT PRICE if quantity > 1
+                            if quantity > 1:
+                                items[-1].price = round(price / quantity, 2)
+                            else:
+                                items[-1].price = round(price, 2)
                     else:
                         # Last line, apply tax now if needed
                         if tax_indicator in ['X', 'T'] and tax_rate_multiplier:
-                            items[-1].price = round(price * tax_rate_multiplier, 2)
+                            price = price * tax_rate_multiplier
+                        
+                        # Calculate UNIT PRICE if quantity > 1
+                        if quantity > 1:
+                            items[-1].price = round(price / quantity, 2)
+                        else:
+                            items[-1].price = round(price, 2)
             
             # Pattern 2: Item name on current line, price on next line
             # This includes weight-based items (e.g., "CHOCOLATE 850041392020 F" followed by "1.000 oz @ 1 oz /5.97 5.97 N")
@@ -385,6 +523,8 @@ class ReceiptParser:
                         quantity = cls._extract_quantity(name)
                         if quantity > 1:
                             name = re.sub(r'^\d+\s*[xX×]\s*', '', name).strip()
+                            # Convert total price to unit price
+                            price = round(price / quantity, 2)
                         
                         items.append(Item(
                             name=name,
@@ -423,6 +563,8 @@ class ReceiptParser:
                             quantity = cls._extract_quantity(name)
                             if quantity > 1:
                                 name = re.sub(r'^\d+\s*[xX×]\s*', '', name).strip()
+                                # Convert total price to unit price
+                                price = round(price / quantity, 2)
                             
                             items.append(Item(
                                 name=name,
