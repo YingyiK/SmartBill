@@ -40,7 +40,7 @@ export default function Dashboard() {
         setSharedExpenses(shared);
 
         const total = myRes.total || 0;
-        const amount = my.reduce((s, e) => s + (e.total_amount || 0), 0);
+        const amount = my.reduce((s, e) => s + Number(e.total_amount || 0), 0);
         const participants = new Set();
         my.forEach((e) => e.participants?.forEach((p) => participants.add(p.name)));
         setStats({
@@ -165,7 +165,7 @@ export default function Dashboard() {
                       >
                         <div className="flex items-center justify-between mb-1">
                           <span className="font-semibold text-gray-900">{exp.store_name || 'Unknown Store'}</span>
-                          <span className="text-lg font-bold text-emerald-600">${exp.total_amount.toFixed(2)}</span>
+                          <span className="text-lg font-bold text-emerald-600">${Number(exp.total_amount).toFixed(2)}</span>
                         </div>
                         <div className="flex flex-wrap items-center gap-3 text-sm text-gray-500">
                           <span>{new Date(exp.created_at).toLocaleDateString()}</span>
