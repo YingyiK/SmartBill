@@ -21,6 +21,11 @@ export default function Dashboard() {
     avgPerExpense: 0,
   });
 
+  /* --------- 展开 / 收起 --------- */
+  const [showAll, setShowAll] = useState(false);
+  const DISPLAY_COUNT = 3;               // 默认显示条数
+  /* -------------------------------- */
+
   useEffect(() => {
     (async () => {
       setLoading(true);
@@ -76,6 +81,11 @@ export default function Dashboard() {
     { icon: <TrendingUp size={24} />, value: `$${stats.avgPerExpense.toFixed(2)}`, label: 'Avg. per Expense', color: 'bg-orange-600' },
   ];
 
+  /* 需要展示的记录 */
+  const visibleList = showAll
+    ? displayExpenses
+    : displayExpenses.slice(0, DISPLAY_COUNT);
+
   return (
     <main className="max-w-7xl mx-auto px-6 py-8">
       {/* Header */}
@@ -104,7 +114,7 @@ export default function Dashboard() {
         ))}
       </div>
 
-      {/* Expenses Tabs */}
+      {/* Expenses Card */}
       <div className="bg-white rounded-xl shadow">
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
           <h2 className="text-lg font-semibold text-gray-900">Expenses</h2>
@@ -112,7 +122,10 @@ export default function Dashboard() {
             {['my', 'shared'].map((t) => (
               <button
                 key={t}
-                onClick={() => setActiveTab(t)}
+                onClick={() => {
+                  setActiveTab(t);
+                  setShowAll(false);          // 切换标签时重置展开状态
+                }}
                 className={`px-3 py-1.5 text-sm font-medium rounded-lg border transition ${activeTab === t ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'}`}
               >
                 {t === 'my' ? `My Expenses (${expenses.length})` : `Shared with Me (${sharedExpenses.length})`}
@@ -140,59 +153,74 @@ export default function Dashboard() {
               )}
             </div>
           ) : (
-            <div className="space-y-3">
-              {displayExpenses.map((exp) => (
-                <div key={exp.id} className="relative bg-white border border-gray-200 rounded-lg p-4 hover:shadow transition">
-                  <div className="flex items-start justify-between">
-                    <div
-                      className="flex-1 cursor-pointer"
-                      onClick={() => navigate(`/expense/${exp.id}`)}
-                    >
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="font-semibold text-gray-900">{exp.store_name || 'Unknown Store'}</span>
-                        <span className="text-lg font-bold text-emerald-600">${exp.total_amount.toFixed(2)}</span>
+            <>
+              {/* 列表 */}
+              <div className="space-y-3">
+                {visibleList.map((exp) => (
+                  <div key={exp.id} className="relative bg-white border border-gray-200 rounded-lg p-4 hover:shadow transition">
+                    <div className="flex items-start justify-between">
+                      <div
+                        className="flex-1 cursor-pointer"
+                        onClick={() => navigate(`/expense/${exp.id}`)}
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-semibold text-gray-900">{exp.store_name || 'Unknown Store'}</span>
+                          <span className="text-lg font-bold text-emerald-600">${exp.total_amount.toFixed(2)}</span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-3 text-sm text-gray-500">
+                          <span>{new Date(exp.created_at).toLocaleDateString()}</span>
+                          {exp.items?.length > 0 && <span>{exp.items.length} items</span>}
+                          {exp.transcript && (
+                            <span className="italic text-gray-400">💬 {exp.transcript.slice(0, 50)}…</span>
+                          )}
+                        </div>
                       </div>
-                      <div className="flex flex-wrap items-center gap-3 text-sm text-gray-500">
-                        <span>{new Date(exp.created_at).toLocaleDateString()}</span>
-                        {exp.items?.length > 0 && <span>{exp.items.length} items</span>}
-                        {exp.transcript && (
-                          <span className="italic text-gray-400">💬 {exp.transcript.slice(0, 50)}…</span>
+
+                      <div className="flex items-center gap-2 ml-4" onClick={(e) => e.stopPropagation()}>
+                        {activeTab === 'my' && (
+                          <>
+                            <button
+                              onClick={() => handleSplitBill(exp)}
+                              className="inline-flex items-center gap-1 px-3 py-1.5 border border-blue-600 text-blue-600 rounded-md hover:bg-blue-50"
+                            >
+                              <Share2 size={16} />
+                              Split
+                            </button>
+                            <button
+                              onClick={() => handleDeleteExpense(exp.id, exp.store_name)}
+                              className="inline-flex items-center gap-1 px-3 py-1.5 border border-red-200 text-red-600 rounded-md hover:bg-red-50"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </>
+                        )}
+                        {activeTab === 'shared' && (
+                          <button
+                            onClick={() => navigate(`/expense/${exp.id}`)}
+                            className="inline-flex items-center gap-1 px-3 py-1.5 border border-gray-300 text-gray-600 rounded-md hover:bg-gray-50"
+                          >
+                            <Eye size={16} />
+                            View
+                          </button>
                         )}
                       </div>
                     </div>
-
-                    <div className="flex items-center gap-2 ml-4" onClick={(e) => e.stopPropagation()}>
-                      {activeTab === 'my' && (
-                        <>
-                          <button
-                            onClick={() => handleSplitBill(exp)}
-                            className="inline-flex items-center gap-1 px-3 py-1.5 border border-blue-600 text-blue-600 rounded-md hover:bg-blue-50"
-                          >
-                            <Share2 size={16} />
-                            Split
-                          </button>
-                          <button
-                            onClick={() => handleDeleteExpense(exp.id, exp.store_name)}
-                            className="inline-flex items-center gap-1 px-3 py-1.5 border border-red-200 text-red-600 rounded-md hover:bg-red-50"
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        </>
-                      )}
-                      {activeTab === 'shared' && (
-                        <button
-                          onClick={() => navigate(`/expense/${exp.id}`)}
-                          className="inline-flex items-center gap-1 px-3 py-1.5 border border-gray-300 text-gray-600 rounded-md hover:bg-gray-50"
-                        >
-                          <Eye size={16} />
-                          View
-                        </button>
-                      )}
-                    </div>
                   </div>
+                ))}
+              </div>
+
+              {/* More / Less 按钮 */}
+              {displayExpenses.length > DISPLAY_COUNT && (
+                <div className="mt-4 text-center">
+                  <button
+                    onClick={() => setShowAll((v) => !v)}
+                    className="px-4 py-2 text-sm text-blue-600 border border-blue-600 rounded-lg hover:bg-blue-50"
+                  >
+                    {showAll ? 'Show less' : `Show all (${displayExpenses.length})`}
+                  </button>
                 </div>
-              ))}
-            </div>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -242,7 +270,10 @@ export default function Dashboard() {
             setSelectedExpense(null);
           }}
           expense={selectedExpense}
-          onSuccess={() => loadAllData()}
+          onSuccess={() => {
+            /* 简单的重新拉数据，可按需调整 */
+            window.location.reload();
+          }}
         />
       )}
     </main>
