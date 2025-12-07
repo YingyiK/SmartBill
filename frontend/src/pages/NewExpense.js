@@ -1,4 +1,4 @@
-// NewExpense.js  –  零 CSS 文件，纯 Tailwind
+// NewExpense.js  –  纯 Tailwind，零 CSS
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Mic, MicOff } from 'lucide-react';
@@ -11,13 +11,17 @@ import authService from '../services/authService';
 
 const NewExpense = () => {
   const navigate = useNavigate();
+
+  /* ---------- 步骤顺序 ---------- */
   const [activeStep, setActiveStep] = useState(1);
+
+  /* ---------- Step 1 状态 ---------- */
   const [selectedFile, setSelectedFile] = useState(null);
   const [loading, setLoading] = useState(false);
   const [ocrResult, setOcrResult] = useState(null);
   const [error, setError] = useState('');
 
-  // Voice
+  /* ---------- Step 2 语音 ---------- */
   const [isRecording, setIsRecording] = useState(false);
   const [audioBlob, setAudioBlob] = useState(null);
   const [transcript, setTranscript] = useState(null);
@@ -27,17 +31,17 @@ const NewExpense = () => {
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
 
-  // Split assignment
+  /* ---------- Step 4 分摊 ---------- */
   const [itemAssignments, setItemAssignments] = useState({});
   const [participants, setParticipants] = useState([]);
-  const [step5Initialized, setStep5Initialized] = useState(false);
+  const [step4Initialized, setStep4Initialized] = useState(false);
 
-  // Groups & contacts
+  /* ---------- 群组 & 联系人 ---------- */
   const [contactGroups, setContactGroups] = useState([]);
   const [selectedGroupId, setSelectedGroupId] = useState(null);
   const [contacts, setContacts] = useState([]);
 
-  // Load groups & contacts
+  /* ---------- 生命周期 ---------- */
   useEffect(() => {
     loadContactGroups();
     loadContacts();
@@ -48,7 +52,7 @@ const NewExpense = () => {
       const res = await contactGroupsAPI.getContactGroups();
       setContactGroups(res.groups || []);
     } catch (err) {
-      console.error('Failed to load contact groups:', err);
+      console.error(err);
     }
   };
 
@@ -57,11 +61,11 @@ const NewExpense = () => {
       const res = await contactsAPI.getContacts();
       setContacts(res.contacts || []);
     } catch (err) {
-      console.error('Failed to load contacts:', err);
+      console.error(err);
     }
   };
 
-  // File select
+  /* ---------- Step 1 上传 ---------- */
   const handleFileSelect = (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -71,7 +75,6 @@ const NewExpense = () => {
     }
   };
 
-  // Process receipt
   const handleProcessReceipt = async () => {
     if (!selectedFile) return setError('Please select a file first');
     setLoading(true);
@@ -79,7 +82,7 @@ const NewExpense = () => {
     try {
       const result = await ocrAPI.uploadReceipt(selectedFile);
       setOcrResult(result);
-      setActiveStep(3);
+      setActiveStep(2); // → Voice Input
     } catch (err) {
       setError(err.message || 'Failed to process receipt');
     } finally {
@@ -87,7 +90,7 @@ const NewExpense = () => {
     }
   };
 
-  // Voice recording
+  /* ---------- Step 2 语音 ---------- */
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -116,7 +119,7 @@ const NewExpense = () => {
 
   const handleProcessVoice = async () => {
     if (!audioBlob) {
-      setActiveStep(4);
+      setActiveStep(3);
       setTimeout(() => setAnalysisLoading(false), 500);
       return;
     }
@@ -136,7 +139,7 @@ const NewExpense = () => {
       const result = await sttAPI.processVoice(audioFile, groupMembers, ocrItems, currentUserName);
       setTranscript(result.transcript || result);
       setSttResult(result);
-      setActiveStep(4);
+      setActiveStep(3); // → AI Analysis
       setTimeout(() => setAnalysisLoading(false), 1000);
     } catch (err) {
       setError(err.message || 'Failed to process voice');
@@ -145,52 +148,46 @@ const NewExpense = () => {
     }
   };
 
-  // Initialize participants for step 5
-  const initializeStep5Participants = useCallback(() => {
+  /* ---------- Step 4 分摊 ---------- */
+  const addParticipant = (name) => {
+    if (!name || participants.includes(name)) return;
+    const key = name.toLowerCase().trim();
+    // 默认把当前全部商品索引分配给新参与者
+    const allIndices = ocrResult?.items?.map((_, idx) => idx) || [];
+    setParticipants((prev) => [...prev, name]);
+    setItemAssignments((prev) => ({ ...prev, [key]: allIndices }));
+  };
+
+  // 进入 Step4 时若空则自动创建"me"并全选
+  useEffect(() => {
+    if (activeStep === 4 && participants.length === 0) {
+      addParticipant('me');
+    }
+  }, [activeStep, participants.length]);
+
+  const initializeStep4Participants = useCallback(() => {
     if (selectedGroupId) {
       const group = contactGroups.find((g) => g.id === selectedGroupId);
       if (group?.members) {
         const names = group.members.map((m) => m.contact_nickname || m.contact_email.split('@')[0]);
-        setParticipants(names);
-        if (sttResult?.participants?.length && ocrResult?.items) {
-          const assignments = {};
-          sttResult.participants.forEach((p) => {
-            const key = p.name.toLowerCase().trim();
-            const indices = p.items
-              ?.map((name) => ocrResult.items.findIndex((i) => i.name.toLowerCase().trim() === name.toLowerCase().trim()))
-              .filter((i) => i !== -1);
-            if (indices?.length) assignments[key] = indices;
-          });
-          setItemAssignments(assignments);
-        }
+        names.forEach(addParticipant);
         return;
       }
     }
     if (sttResult?.participants?.length) {
       const names = sttResult.participants.map((p) => p.name.toLowerCase().trim());
-      setParticipants(names);
-      if (ocrResult?.items) {
-        const assignments = {};
-        sttResult.participants.forEach((p, idx) => {
-          const key = names[idx];
-          const indices = p.items
-            ?.map((name) => ocrResult.items.findIndex((i) => i.name.toLowerCase().trim() === name.toLowerCase().trim()))
-            .filter((i) => i !== -1);
-          if (indices?.length) assignments[key] = indices;
-        });
-        setItemAssignments(assignments);
-      }
+      names.forEach(addParticipant);
     }
   }, [selectedGroupId, contactGroups, sttResult, ocrResult]);
 
   useEffect(() => {
-    if (activeStep === 5 && !step5Initialized) {
-      initializeStep5Participants();
-      setStep5Initialized(true);
-    } else if (activeStep !== 5) setStep5Initialized(false);
-  }, [activeStep, step5Initialized, initializeStep5Participants]);
+    if (activeStep === 4 && !step4Initialized) {
+      initializeStep4Participants();
+      setStep4Initialized(true);
+    } else if (activeStep !== 4) setStep4Initialized(false);
+  }, [activeStep, step4Initialized, initializeStep4Participants]);
 
-  // Save expense
+  /* ---------- Step 5 保存 ---------- */
   const handleComplete = async () => {
     if (!ocrResult) return setError('No receipt data to save');
     setLoading(true);
@@ -213,15 +210,7 @@ const NewExpense = () => {
         items: (ocrResult.items || []).map((it) => ({ name: it.name, price: it.price, quantity: it.quantity || 1 })),
         participants: participantsData,
       });
-      // Reset and redirect
-      setSelectedFile(null);
-      setOcrResult(null);
-      setTranscript(null);
-      setSttResult(null);
-      setAudioBlob(null);
-      setParticipants([]);
-      setItemAssignments({});
-      setActiveStep(1);
+      // 成功后跳转到 dashboard
       window.location.href = '/dashboard';
     } catch (err) {
       setError(err.message || 'Failed to save expense');
@@ -230,6 +219,36 @@ const NewExpense = () => {
     }
   };
 
+  /* ---------- 通用回退 ---------- */
+  const goBack = () => {
+    if (activeStep > 1) setActiveStep((s) => s - 1);
+  };
+
+  /* ---------- 每人应付金额计算 ---------- */
+  const perPersonTotal = React.useMemo(() => {
+    if (!ocrResult?.items) return {};
+    const res = {};
+    participants.forEach((p) => {
+      const key = p.toLowerCase().trim();
+      const indices = itemAssignments[key] || [];
+      let sum = 0;
+      indices.forEach((itemIdx) => {
+        const item = ocrResult.items[itemIdx];
+        if (!item) return;
+        const shareCount = participants.filter((pp) => {
+          const ppKey = pp.toLowerCase().trim();
+          return itemAssignments[ppKey]?.includes(itemIdx);
+        }).length;
+        if (shareCount) sum += (item.price || 0) / shareCount;
+      });
+      res[p] = sum.toFixed(2);
+    });
+    return res;
+  }, [participants, itemAssignments, ocrResult]);
+
+  /* ************************************************ */
+  /*                      UI 渲染                      */
+  /* ************************************************ */
   return (
     <div className="max-w-7xl mx-auto px-16">
       <PageHeader
@@ -238,7 +257,7 @@ const NewExpense = () => {
       />
       <StepIndicator steps={STEPS} activeStep={activeStep} />
 
-      {/* Step 1: Upload */}
+      {/* Step 1  Upload Bill */}
       {activeStep === 1 && (
         <>
           <UploadArea onFileSelect={handleFileSelect} selectedFile={selectedFile} />
@@ -274,8 +293,8 @@ const NewExpense = () => {
         </>
       )}
 
-      {/* Step 3: Voice Input */}
-      {activeStep === 3 && (
+      {/* Step 2  Voice Input */}
+      {activeStep === 2 && (
         <div className="mt-8 space-y-8">
           {ocrResult && (
             <div className="bg-white rounded-xl border border-gray-200 p-6">
@@ -423,7 +442,14 @@ const NewExpense = () => {
                 <p className="text-sm text-gray-600">{transcript}</p>
               </div>
             )}
-            <div className="mt-6">
+            <div className="mt-6 flex items-center justify-center gap-3">
+              <button
+                onClick={goBack}
+                className="inline-flex items-center gap-2 px-4 py-2 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50"
+              >
+                ← Back
+              </button>
+
               <button
                 className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
                 onClick={handleProcessVoice}
@@ -436,8 +462,8 @@ const NewExpense = () => {
         </div>
       )}
 
-      {/* Step 4: AI Analysis / Review */}
-      {activeStep === 4 && (
+      {/* Step 3  AI Analysis */}
+      {activeStep === 3 && (
         <div className="mt-8 bg-white rounded-xl border border-gray-200 p-8">
           <h3 className="text-2xl font-bold text-center mb-6">📋 AI Analysis Summary</h3>
           {analysisLoading ? (
@@ -479,13 +505,20 @@ const NewExpense = () => {
               )}
 
               {/* Continue */}
-              <div className="text-center">
+              <div className="text-center flex items-center justify-center gap-3">
+                <button
+                  onClick={goBack}
+                  className="inline-flex items-center gap-2 px-4 py-2 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50"
+                >
+                  ← Back
+                </button>
+
                 <button
                   className="inline-flex items-center gap-2 px-8 py-4 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition"
-                  onClick={() => setActiveStep(5)}
+                  onClick={() => setActiveStep(4)}
                   disabled={loading}
                 >
-                  Continue to Split Assignment →
+                  Continue to Bill Split →
                 </button>
               </div>
             </>
@@ -493,14 +526,14 @@ const NewExpense = () => {
         </div>
       )}
 
-      {/* Step 5: Split Assignment */}
-      {activeStep === 5 && (
+      {/* Step 4  Bill Split */}
+      {activeStep === 4 && (
         <div className="mt-8 space-y-8">
           <div>
-            <h3 className="text-2xl font-bold mb-2">👥 Split Assignment</h3>
+            <h3 className="text-2xl font-bold mb-2">👥 Bill Split</h3>
             <p className="text-gray-500 mb-8">Select participants and assign items to each person. Items are initially unassigned unless detected from voice input.</p>
 
-            {/* Group Selection (if no group selected and no STT result) */}
+            {/* 群组快速添加（可选） */}
             {!selectedGroupId && !sttResult?.participants && contactGroups.length > 0 && (
               <div className="p-6 bg-white rounded-xl border border-gray-200">
                 <h4 className="text-lg font-semibold mb-2">👥 Select Friend Group (Optional)</h4>
@@ -513,7 +546,7 @@ const NewExpense = () => {
                       const group = contactGroups.find((g) => g.id === e.target.value);
                       if (group?.members) {
                         const names = group.members.map((m) => m.contact_nickname || m.contact_email.split('@')[0]);
-                        setParticipants((prev) => [...new Set([...prev, ...names])]);
+                        names.forEach(addParticipant);   // 逐人添加并默认全选
                         setSelectedGroupId(e.target.value);
                       }
                     }
@@ -529,7 +562,7 @@ const NewExpense = () => {
               </div>
             )}
 
-            {/* Add Participant */}
+            {/* 手动添加参与者 */}
             <div className="flex items-center gap-3 p-4 bg-gray-50 border border-gray-200 rounded-lg">
               <input
                 type="text"
@@ -537,11 +570,8 @@ const NewExpense = () => {
                 className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 onKeyPress={(e) => {
                   if (e.key === 'Enter' && e.target.value.trim()) {
-                    const name = e.target.value.trim();
-                    if (!participants.includes(name)) {
-                      setParticipants([...participants, name]);
-                      e.target.value = '';
-                    }
+                    addParticipant(e.target.value.trim());
+                    e.target.value = '';
                   }
                 }}
               />
@@ -549,18 +579,15 @@ const NewExpense = () => {
                 className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
                 onClick={(e) => {
                   const input = e.target.previousElementSibling;
-                  const name = input.value.trim();
-                  if (name && !participants.includes(name)) {
-                    setParticipants([...participants, name]);
-                    input.value = '';
-                  }
+                  addParticipant(input.value.trim());
+                  input.value = '';
                 }}
               >
                 + Add Participant
               </button>
             </div>
 
-            {/* Participants List */}
+            {/* 已添加的参与者卡片 */}
             {participants.length > 0 && (
               <div className="space-y-4">
                 <h4 className="text-lg font-semibold">Participants ({participants.length})</h4>
@@ -593,15 +620,15 @@ const NewExpense = () => {
                               {indices.map((itemIdx) => {
                                 const item = ocrResult.items[itemIdx];
                                 if (!item) return null;
-                                const assignedCount = participants.filter((p) => {
-                                  const pKey = p.toLowerCase().trim();
-                                  return itemAssignments[pKey] && itemAssignments[pKey].includes(itemIdx);
+                                const shareCount = participants.filter((pp) => {
+                                  const ppKey = pp.toLowerCase().trim();
+                                  return itemAssignments[ppKey]?.includes(itemIdx);
                                 }).length;
-                                const amountPerPerson = assignedCount > 0 ? (item.price || 0) / assignedCount : 0;
+                                const amountPerPerson = shareCount > 0 ? (item.price || 0) / shareCount : 0;
                                 return (
                                   <li key={itemIdx} className="text-sm text-gray-700">
                                     {item.name} - ${amountPerPerson.toFixed(2)}
-                                    {assignedCount > 1 && <span className="text-xs text-blue-600 ml-1">(shared with {assignedCount})</span>}
+                                    {shareCount > 1 && <span className="text-xs text-blue-600 ml-1">(shared with {shareCount})</span>}
                                   </li>
                                 );
                               })}
@@ -618,11 +645,11 @@ const NewExpense = () => {
                               <strong>Total: ${(indices.reduce((sum, itemIdx) => {
                                 const item = ocrResult.items[itemIdx];
                                 if (!item) return sum;
-                                const assignedCount = participants.filter((p) => {
-                                  const pKey = p.toLowerCase().trim();
-                                  return itemAssignments[pKey] && itemAssignments[pKey].includes(itemIdx);
+                                const shareCount = participants.filter((pp) => {
+                                  const ppKey = pp.toLowerCase().trim();
+                                  return itemAssignments[ppKey]?.includes(itemIdx);
                                 }).length;
-                                return sum + (assignedCount > 0 ? (item.price || 0) / assignedCount : 0);
+                                return sum + (shareCount > 0 ? (item.price || 0) / shareCount : 0);
                               }, 0)).toFixed(2)}</strong>
                             </div>
                           );
@@ -634,7 +661,7 @@ const NewExpense = () => {
               </div>
             )}
 
-            {/* Items Assignment */}
+            {/* 商品分配区域 */}
             {ocrResult && ocrResult.items && ocrResult.items.length > 0 && (
               <div className="space-y-4">
                 <h4 className="text-lg font-semibold">Items ({ocrResult.items.length})</h4>
@@ -644,16 +671,16 @@ const NewExpense = () => {
                       const pKey = p.toLowerCase().trim();
                       return itemAssignments[pKey] && itemAssignments[pKey].includes(itemIdx);
                     });
-                    const assignedCount = assignedTo.length;
-                    const amountPerPerson = assignedCount > 0 ? (item.price || 0) / assignedCount : 0;
+                    const shareCount = assignedTo.length;
+                    const amountPerPerson = shareCount > 0 ? (item.price || 0) / shareCount : 0;
                     return (
                       <div key={itemIdx} className="bg-white border border-gray-200 rounded-lg p-4">
                         <div className="flex items-center justify-between mb-4 pb-4 border-b border-gray-200">
                           <span className="font-semibold text-gray-900">{item.name}</span>
                           <div className="text-right">
                             <span className="text-lg font-bold text-emerald-600">${item.price.toFixed(2)}</span>
-                            {assignedCount > 0 && (
-                              <span className="block text-xs text-gray-500">(${amountPerPerson.toFixed(2)} per person × {assignedCount})</span>
+                            {shareCount > 0 && (
+                              <span className="block text-xs text-gray-500">(${amountPerPerson.toFixed(2)} per person × {shareCount})</span>
                             )}
                           </div>
                         </div>
@@ -666,7 +693,10 @@ const NewExpense = () => {
                               {participants.map((participant) => {
                                 const pKey = participant.toLowerCase().trim();
                                 return (
-                                  <label key={participant} className="flex items-center gap-2 px-3 py-2 bg-gray-100 border border-gray-200 rounded-md cursor-pointer hover:bg-gray-200 has-[:checked]:bg-blue-100 has-[:checked]:border-blue-500 has-[:checked]:text-blue-700">
+                                  <label
+                                    key={participant}
+                                    className="flex items-center gap-2 px-3 py-2 bg-gray-100 border border-gray-200 rounded-md cursor-pointer hover:bg-gray-200 has-[:checked]:bg-blue-100 has-[:checked]:border-blue-500 has-[:checked]:text-blue-700"
+                                  >
                                     <input
                                       type="checkbox"
                                       checked={itemAssignments[pKey]?.includes(itemIdx) || false}
@@ -698,14 +728,73 @@ const NewExpense = () => {
               </div>
             )}
 
-            {/* Complete */}
-            <div className="text-center">
+            {/* 下一步 */}
+            <div className="text-center flex items-center justify-center gap-3">
+              <button
+                onClick={goBack}
+                className="inline-flex items-center gap-2 px-4 py-2 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50"
+              >
+                ← Back
+              </button>
+
               <button
                 className="inline-flex items-center gap-2 px-8 py-4 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition"
+                onClick={() => setActiveStep(5)}
+                disabled={loading}
+              >
+                Continue to Bill Summary →
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Step 5  Bill Summary */}
+      {activeStep === 5 && (
+        <div className="mt-8 space-y-8">
+          <div className="bg-white rounded-xl border border-gray-200 p-8">
+            <h3 className="text-2xl font-bold text-center mb-6">📋 Bill Summary</h3>
+
+            {/* Expense Details */}
+            <div className="mb-6 p-6 bg-gray-50 border border-gray-200 rounded-lg">
+              <h4 className="text-lg font-semibold mb-4">Expense Details</h4>
+              <div className="space-y-3">
+                <div className="flex justify-between"><span className="text-gray-600">Store:</span><span className="font-medium">{ocrResult?.store_name || 'N/A'}</span></div>
+                <div className="flex justify-between"><span className="text-gray-600">Total:</span><span className="font-medium">${ocrResult?.total?.toFixed(2) || 'N/A'}</span></div>
+                {ocrResult?.subtotal && <div className="flex justify-between"><span className="text-gray-600">Subtotal:</span><span className="font-medium">${ocrResult.subtotal.toFixed(2)}</span></div>}
+                {ocrResult?.tax_amount && <div className="flex justify-between"><span className="text-gray-600">Tax:</span><span className="font-medium">${ocrResult.tax_amount.toFixed(2)}</span></div>}
+                {ocrResult?.items?.length > 0 && <div className="flex justify-between"><span className="text-gray-600">Items:</span><span className="font-medium">{ocrResult.items.length} items</span></div>}
+              </div>
+            </div>
+
+            {/* Per-person Share */}
+            <div className="mb-6 p-6 bg-gray-50 border border-gray-200 rounded-lg">
+              <h4 className="text-lg font-semibold mb-4">Per-person Share</h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {participants.map((p) => (
+                  <div key={p} className="flex items-center justify-between bg-white border border-gray-200 rounded-lg p-4">
+                    <span className="font-medium text-gray-900">{p}</span>
+                    <span className="text-lg font-bold text-emerald-600">${perPersonTotal[p] || '0.00'}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="text-center flex items-center justify-center gap-3">
+              <button
+                onClick={goBack}
+                className="inline-flex items-center gap-2 px-4 py-2 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50"
+              >
+                ← Back
+              </button>
+
+              <button
+                className="inline-flex items-center gap-2 px-8 py-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
                 onClick={handleComplete}
                 disabled={loading}
               >
-                {loading ? 'Saving...' : '✓ Complete & Save Expense'}
+                {loading ? 'Saving...' : 'Confirm & Save'}
               </button>
             </div>
           </div>
