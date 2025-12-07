@@ -262,7 +262,7 @@ const NewExpense = () => {
           <UploadArea onFileSelect={handleFileSelect} selectedFile={selectedFile} />
           {contactGroups.length > 0 && (
             <div className="mt-8 p-6 bg-white rounded-xl border border-gray-200">
-              <h4 className="text-lg font-semibold mb-2">👥 Select Friend Group (Optional)</h4>
+              <h4 className="text-lg font-semibold mb-2"> Select Friend Group (Optional)</h4>
               <p className="text-sm text-gray-500 mb-4">Help AI better understand the bill split</p>
               <select
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -297,7 +297,7 @@ const NewExpense = () => {
         <div className="mt-8 space-y-8">
           {ocrResult && (
             <div className="bg-white rounded-xl border border-gray-200 p-6">
-              <h3 className="text-xl font-semibold mb-4">📄 Receipt Details (Editable)</h3>
+              <h3 className="text-xl font-semibold mb-4"> Receipt Details (Editable)</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Store</label>
@@ -409,7 +409,7 @@ const NewExpense = () => {
           )}
 
           <div className="mt-8 bg-white rounded-xl border border-gray-200 p-6 text-center">
-            <h3 className="text-xl font-semibold mb-2">🎤 Voice Input</h3>
+            <h3 className="text-xl font-semibold mb-2"> Voice Input</h3>
             <p className="text-gray-500 mb-6">Describe how to split this bill (optional)</p>
             <div className="flex items-center justify-center gap-4">
               {!isRecording ? (
@@ -464,7 +464,7 @@ const NewExpense = () => {
       {/* Step 3  AI Analysis */}
       {activeStep === 3 && (
         <div className="mt-8 bg-white rounded-xl border border-gray-200 p-8">
-          <h3 className="text-2xl font-bold text-center mb-6">📋 AI Analysis Summary</h3>
+          <h3 className="text-2xl font-bold text-center mb-6"> AI Analysis Summary</h3>
           {analysisLoading ? (
             <div className="text-center py-16 text-gray-500">Processing expense split...</div>
           ) : (
@@ -529,13 +529,13 @@ const NewExpense = () => {
       {activeStep === 4 && (
         <div className="mt-8 space-y-8">
           <div>
-            <h3 className="text-2xl font-bold mb-2">👥 Bill Split</h3>
+            <h3 className="text-2xl font-bold mb-2"> Bill Split</h3>
             <p className="text-gray-500 mb-8">Select participants and assign items to each person. Items are initially unassigned unless detected from voice input.</p>
 
             {/* 群组快速添加（可选） */}
             {!selectedGroupId && !sttResult?.participants && contactGroups.length > 0 && (
               <div className="p-6 bg-white rounded-xl border border-gray-200">
-                <h4 className="text-lg font-semibold mb-2">👥 Select Friend Group (Optional)</h4>
+                <h4 className="text-lg font-semibold mb-2"> Select Friend Group (Optional)</h4>
                 <p className="text-sm text-gray-500 mb-4">Quickly add all members from a group</p>
                 <select
                   className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -752,7 +752,7 @@ const NewExpense = () => {
       {activeStep === 5 && (
         <div className="mt-8 space-y-8">
           <div className="bg-white rounded-xl border border-gray-200 p-8">
-            <h3 className="text-2xl font-bold text-center mb-6">📋 Bill Summary</h3>
+            <h3 className="text-2xl font-bold text-center mb-6"> Bill Summary</h3>
 
             {/* Expense Details */}
             <div className="mb-6 p-6 bg-gray-50 border border-gray-200 rounded-lg">
