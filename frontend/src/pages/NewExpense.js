@@ -254,34 +254,120 @@ const handleRemoveItem = (idx) => {
     setItemAssignments((prev) => ({ ...prev, [key]: allIndices }));
   };
 
-  // 进入 Step4 时若空则自动创建"me"并全选
-  useEffect(() => {
-    if (activeStep === 4 && participants.length === 0) {
-      addParticipant('me');
-    }
-  }, [activeStep, participants.length]);
+  // Conflicting auto-add "me" participant logic removed
+  // useEffect(() => {
+  //   if (activeStep === 4 && participants.length === 0) {
+  //     addParticipant('me');
+  //   }
+  // }, [activeStep, participants.length]);
 
   const initializeStep4Participants = useCallback(() => {
-    if (selectedGroupId) {
-      const group = contactGroups.find((g) => g.id === selectedGroupId);
-      if (group?.members) {
-        const names = group.members.map((m) => m.contact_nickname || m.contact_email.split('@')[0]);
-        names.forEach(addParticipant);
-        return;
-      }
-    }
-    if (sttResult?.participants?.length) {
-      const names = sttResult.participants.map((p) => p.name.toLowerCase().trim());
-      names.forEach(addParticipant);
-    }
-  }, [selectedGroupId, contactGroups, sttResult, ocrResult]);
+  // Get current user info
+  const currentUser = authService.getCurrentUser();
+  const currentUserEmail = currentUser?.email?.toLowerCase();
+  
+  // Get all item indices
+  const allIndices = ocrResult?.items?.map((_, idx) => idx) || [];
+  
+  let newParticipants = [];
+  let newAssignments = {};
 
-  useEffect(() => {
-    if (activeStep === 4 && !step4Initialized) {
-      initializeStep4Participants();
-      setStep4Initialized(true);
-    } else if (activeStep !== 4) setStep4Initialized(false);
-  }, [activeStep, step4Initialized, initializeStep4Participants]);
+  // Scenario 1: Group selected
+  if (selectedGroupId) {
+    const group = contactGroups.find((g) => g.id === selectedGroupId);
+    if (group?.members) {
+      let foundCurrentUser = false;
+      
+      // Iterate over group members
+      group.members.forEach((member) => {
+        const memberEmail = member.contact_email?.toLowerCase();
+        const memberName = member.contact_nickname || member.contact_email.split('@')[0];
+        
+        // Check if current user
+        if (memberEmail === currentUserEmail) {
+          // Current user → add as "me (You)"
+          const displayName = 'me (You)';
+          if (!newParticipants.includes(displayName)) {
+            newParticipants.push(displayName);
+            newAssignments[displayName.toLowerCase().trim()] = allIndices;
+          }
+          foundCurrentUser = true;
+        } else {
+          // Not current user → use original name
+          if (!newParticipants.includes(memberName)) {
+            newParticipants.push(memberName);
+            newAssignments[memberName.toLowerCase().trim()] = allIndices;
+          }
+        }
+      });
+      
+      // If current user not in group, add "me"
+      if (!foundCurrentUser) {
+        const displayName = 'me';
+        newParticipants.push(displayName);
+        newAssignments[displayName.toLowerCase().trim()] = allIndices;
+      }
+      
+      // Batch update state
+      setParticipants(newParticipants);
+      setItemAssignments(newAssignments);
+      return;
+    }
+  }
+  
+  // Scenario 2: Participants recognized from voice
+  if (sttResult?.participants?.length) {
+    let foundCurrentUser = false;
+    
+    sttResult.participants.forEach((p) => {
+      const participantName = p.name.toLowerCase().trim();
+      const currentUserName = currentUserEmail?.split('@')[0]?.toLowerCase();
+      
+      // Check if current user (by name match)
+      if (participantName === currentUserName || participantName === 'me') {
+        const displayName = 'me (You)';
+        if (!newParticipants.includes(displayName)) {
+          newParticipants.push(displayName);
+          newAssignments[displayName.toLowerCase().trim()] = allIndices;
+        }
+        foundCurrentUser = true;
+      } else {
+        if (!newParticipants.includes(p.name)) {
+          newParticipants.push(p.name);
+          newAssignments[p.name.toLowerCase().trim()] = allIndices;
+        }
+      }
+    });
+    
+    // If current user not mentioned in voice, add "me"
+    if (!foundCurrentUser) {
+      const displayName = 'me';
+      newParticipants.push(displayName);
+      newAssignments[displayName.toLowerCase().trim()] = allIndices;
+    }
+    
+    // Batch update state
+    setParticipants(newParticipants);
+    setItemAssignments(newAssignments);
+    return;
+  }
+  
+  // Scenario 3: Neither group selected nor voice recognized → default add "me"
+  const displayName = 'me';
+  setParticipants([displayName]);
+  setItemAssignments({
+    [displayName.toLowerCase().trim()]: allIndices
+  });
+}, [selectedGroupId, contactGroups, sttResult, ocrResult]);
+  
+useEffect(() => {
+  if (activeStep === 4 && !step4Initialized) {
+    initializeStep4Participants();
+    setStep4Initialized(true);
+  } else if (activeStep !== 4) {
+    setStep4Initialized(false);
+  }
+}, [activeStep, step4Initialized, initializeStep4Participants]);
 
   /* ---------- Step 5 保存 ---------- */
   const handleComplete = async () => {
