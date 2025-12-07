@@ -19,6 +19,7 @@ const NewExpense = () => {
   const [loading, setLoading] = useState(false);
   const [ocrResult, setOcrResult] = useState(null);
   const [error, setError] = useState('');
+  const [autoCalculate, setAutoCalculate] = useState(true);
 
   /* ---------- Step 2 语音 ---------- */
   const [isRecording, setIsRecording] = useState(false);
@@ -88,6 +89,102 @@ const NewExpense = () => {
       setLoading(false);
     }
   };
+  const roundToTwo = (num) => {
+  return Math.round((num + Number.EPSILON) * 100) / 100;
+  };
+
+  // Recalculate subtotal and total based on items and fixed tax amount
+  const recalculateFinancials = useCallback((items, currentTaxAmount) => {
+  if (!items || items.length === 0) {
+    return {
+      subtotal: 0,
+      total: roundToTwo(parseFloat(currentTaxAmount) || 0),
+    };
+  }
+
+  // calculate new subtotal
+  const newSubtotal = items.reduce((sum, item) => {
+    const price = parseFloat(item.price) || 0;
+    const quantity = parseInt(item.quantity) || 1;
+    return roundToTwo(sum + price * quantity);
+  }, 0);
+
+  // Tax amount remains unchanged (from OCR or user manual modification)
+  const taxAmount = parseFloat(currentTaxAmount) || 0;
+
+  // Calculate new total: subtotal + tax amount
+  const newTotal = roundToTwo(newSubtotal + taxAmount);
+
+  return {
+    subtotal: newSubtotal,
+    total: newTotal,
+    // Tax amount is not returned here because it is fixed
+  };
+}, []);
+
+// Handle item field changes
+const handleItemChange = (idx, field, val) => {
+  const items = [...ocrResult.items];
+  
+  if (field === 'price') {
+    items[idx][field] = parseFloat(val) || 0;
+  } else if (field === 'quantity') {
+    items[idx][field] = Math.max(1, parseInt(val, 10) || 1);
+  } else {
+    items[idx][field] = val;
+  }
+
+  // If autoCalculate is enabled, recalculate subtotal and total
+  if (autoCalculate) {
+    const financials = recalculateFinancials(items, ocrResult.tax_amount);
+    setOcrResult({
+      ...ocrResult,
+      items,
+      ...financials,
+      // tax_amount remains unchanged
+    });
+  } else {
+    setOcrResult({ ...ocrResult, items });
+  }
+};
+
+// Add new item
+const handleAddItem = () => {
+  const newItems = [...(ocrResult.items || []), { name: '', price: 0, quantity: 1 }];
+  
+  if (autoCalculate) {
+    const financials = recalculateFinancials(newItems, ocrResult.tax_amount);
+    setOcrResult({
+      ...ocrResult,
+      items: newItems,
+      ...financials,
+    });
+  } else {
+    setOcrResult({
+      ...ocrResult,
+      items: newItems,
+    });
+  }
+};
+
+// Remove item
+const handleRemoveItem = (idx) => {
+  const newItems = ocrResult.items.filter((_, i) => i !== idx);
+  
+  if (autoCalculate) {
+    const financials = recalculateFinancials(newItems, ocrResult.tax_amount);
+    setOcrResult({
+      ...ocrResult,
+      items: newItems,
+      ...financials,
+    });
+  } else {
+    setOcrResult({
+      ...ocrResult,
+      items: newItems,
+    });
+  }
+};
 
   /* ---------- Step 2 语音 ---------- */
   const startRecording = async () => {
@@ -245,6 +342,7 @@ const NewExpense = () => {
     return res;
   }, [participants, itemAssignments, ocrResult]);
 
+
   /* ************************************************ */
   /*                      UI 渲染                      */
   /* ************************************************ */
@@ -292,121 +390,198 @@ const NewExpense = () => {
         </>
       )}
 
-      {/* Step 2  Voice Input */}
-      {activeStep === 2 && (
-        <div className="mt-8 space-y-8">
-          {ocrResult && (
-            <div className="bg-white rounded-xl border border-gray-200 p-6">
-              <h3 className="text-xl font-semibold mb-4"> Receipt Details (Editable)</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Store</label>
-                  <input
-                    type="text"
-                    value={ocrResult.store_name || ''}
-                    onChange={(e) => setOcrResult({ ...ocrResult, store_name: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Total</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={ocrResult.total || ''}
-                    onChange={(e) => setOcrResult({ ...ocrResult, total: parseFloat(e.target.value) || 0 })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Subtotal</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={ocrResult.subtotal || ''}
-                    onChange={(e) => setOcrResult({ ...ocrResult, subtotal: parseFloat(e.target.value) || null })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                {ocrResult.tax_amount && (
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Tax</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={ocrResult.tax_amount}
-                      onChange={(e) => setOcrResult({ ...ocrResult, tax_amount: parseFloat(e.target.value) || 0 })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-                )}
-              </div>
-              {ocrResult.items && ocrResult.items.length > 0 && (
-                <div className="mt-6">
-                  <h4 className="text-sm font-semibold text-gray-700 mb-3">Items ({ocrResult.items.length})</h4>
-                  <div className="space-y-3">
-                    {ocrResult.items.map((item, idx) => (
-                      <div key={idx} className="flex items-center gap-3 bg-gray-50 border border-gray-200 rounded-lg p-3">
-                        <input
-                          type="text"
-                          value={item.name || ''}
-                          onChange={(e) => {
-                            const newItems = [...ocrResult.items];
-                            newItems[idx] = { ...newItems[idx], name: e.target.value };
-                            setOcrResult({ ...ocrResult, items: newItems });
-                          }}
-                          placeholder="Item name"
-                          className="flex-2 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        />
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={item.price || ''}
-                          onChange={(e) => {
-                            const newItems = [...ocrResult.items];
-                            newItems[idx] = { ...newItems[idx], price: parseFloat(e.target.value) || 0 };
-                            setOcrResult({ ...ocrResult, items: newItems });
-                          }}
-                          placeholder="Price"
-                          className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        />
-                        <input
-                          type="number"
-                          min="1"
-                          value={item.quantity || 1}
-                          onChange={(e) => {
-                            const newItems = [...ocrResult.items];
-                            newItems[idx] = { ...newItems[idx], quantity: parseInt(e.target.value) || 1 };
-                            setOcrResult({ ...ocrResult, items: newItems });
-                          }}
-                          placeholder="Qty"
-                          className="w-20 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        />
-                        <button
-                          className="w-8 h-8 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center justify-center"
-                          onClick={() => {
-                            const newItems = ocrResult.items.filter((_, i) => i !== idx);
-                            setOcrResult({ ...ocrResult, items: newItems });
-                          }}
-                        >
-                          ×
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                  <button
-                    className="mt-3 inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700"
-                    onClick={() => {
-                      const newItems = [...ocrResult.items, { name: '', price: 0, quantity: 1 }];
-                      setOcrResult({ ...ocrResult, items: newItems });
-                    }}
-                  >
-                    + Add Item
-                  </button>
-                </div>
+  {/* Step 2  Voice Input */}
+  {activeStep === 2 && (
+  <div className="mt-8 space-y-8">
+    {/* Receipt Details Section */}
+    {ocrResult && (
+      <div className="bg-white rounded-xl border border-gray-200 p-6">
+        {/* Explanation Card */}
+        <div className="flex items-center justify-between mb-4 pb-4 border-b border-gray-200">
+          <div>
+            <h3 className="text-xl font-semibold flex items-center gap-2">
+              📝 Receipt Details (Editable)
+            </h3>
+            <p className="text-sm text-gray-500 mt-1">
+              {autoCalculate 
+                ? '✓ Auto-calculating: Subtotal & Total update when you edit items' 
+                : '✗ Manual mode: Edit all fields freely'}
+            </p>
+          </div>
+          
+          {/* Calculate Switch */}
+          <label className="flex items-center gap-3 cursor-pointer bg-gray-50 px-4 py-2 rounded-lg border border-gray-200 hover:border-blue-400 transition">
+            <span className="text-sm font-medium text-gray-700">Auto Calculate</span>
+            <div className="relative">
+              <input
+                type="checkbox"
+                checked={autoCalculate}
+                onChange={(e) => setAutoCalculate(e.target.checked)}
+                className="sr-only peer"
+              />
+              <div className="w-11 h-6 bg-gray-200 rounded-full peer peer-focus:ring-4 peer-focus:ring-blue-300 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:border-gray-300 after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+            </div>
+          </label>
+        </div>
+
+
+        {/* Basic Information Form */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Store Name */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Store Name
+            </label>
+            <input
+              type="text"
+              value={ocrResult.store_name || ''}
+              onChange={(e) => setOcrResult({ ...ocrResult, store_name: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          {/* Total Amount */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Total Amount
+              {autoCalculate && (
+                <span className="text-xs text-green-600 ml-2"> Auto-calculated</span>
               )}
+            </label>
+            <input
+              type="number"
+              step="0.01"
+              value={ocrResult.total || ''}
+              onChange={(e) => setOcrResult({ ...ocrResult, total: parseFloat(e.target.value) || 0 })}
+              disabled={autoCalculate}
+              className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                autoCalculate 
+                  ? 'bg-green-50 border-green-300 cursor-not-allowed text-green-900 font-semibold' 
+                  : 'border-gray-300'
+              }`}
+            />
+          </div>
+
+          {/* Subtotal */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Subtotal (before tax)
+              {autoCalculate && (
+                <span className="text-xs text-green-600 ml-2"> Auto-calculated</span>
+              )}
+            </label>
+            <input
+              type="number"
+              step="0.01"
+              value={ocrResult.subtotal || ''}
+              onChange={(e) => setOcrResult({ ...ocrResult, subtotal: parseFloat(e.target.value) || null })}
+              disabled={autoCalculate}
+              className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                autoCalculate 
+                  ? 'bg-green-50 border-green-300 cursor-not-allowed text-green-900 font-semibold' 
+                  : 'border-gray-300'
+              }`}
+            />
+          </div>
+
+          {/* Tax Amount */}
+          {ocrResult.tax_amount !== null && ocrResult.tax_amount !== undefined && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Tax Amount
+                <span className="text-xs text-amber-600 ml-2"></span>
+              </label>
+              <input
+                type="number"
+                step="0.01"
+                value={ocrResult.tax_amount}
+                onChange={(e) => {
+                  const newTaxAmount = parseFloat(e.target.value) || 0;
+                  if (autoCalculate) {
+                    const newTotal = (ocrResult.subtotal || 0) + newTaxAmount;
+                    setOcrResult({ 
+                      ...ocrResult, 
+                      tax_amount: newTaxAmount,
+                      total: newTotal
+                    });
+                  } else {
+                    setOcrResult({ ...ocrResult, tax_amount: newTaxAmount });
+                  }
+                }}
+                className="w-full px-3 py-2 border border-amber-300 bg-amber-50 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 text-amber-900"
+              />
+              <p className="mt-1 text-xs text-amber-600">
+                This value comes from your receipt. Edit only if OCR misread it.
+              </p>
             </div>
           )}
+        </div>
+
+        {/* Items Section */}
+        {ocrResult.items && ocrResult.items.length > 0 && (
+          <div className="mt-6">
+            <h4 className="text-sm font-semibold text-gray-700 mb-3">
+              Items ({ocrResult.items.length})
+              {autoCalculate && (
+                <span className="text-xs text-green-600 ml-2 font-normal">
+                  Changes will auto-update Subtotal & Total
+                </span>
+              )}
+            </h4>
+            <div className="space-y-3">
+              {ocrResult.items.map((item, idx) => (
+                <div key={idx} className="flex items-center gap-3 bg-gray-50 border border-gray-200 rounded-lg p-3">
+                  {/* Item Name */}
+                  <input
+                    type="text"
+                    value={item.name || ''}
+                    onChange={(e) => handleItemChange(idx, 'name', e.target.value)}
+                    placeholder="Item name"
+                    className="flex-2 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  
+                  {/* Item Price */}
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={item.price || ''}
+                    onChange={(e) => handleItemChange(idx, 'price', e.target.value)}
+                    placeholder="Price"
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  
+                  {/* Item Quantity */}
+                  <input
+                    type="number"
+                    min="1"
+                    value={item.quantity || 1}
+                    onChange={(e) => handleItemChange(idx, 'quantity', e.target.value)}
+                    placeholder="Qty"
+                    className="w-20 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  
+                  {/* Delete Button */}
+                  <button
+                    className="w-8 h-8 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center justify-center"
+                    onClick={() => handleRemoveItem(idx)}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+            
+            {/* Add Item Button */}
+            <button
+              className="mt-3 inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700"
+              onClick={handleAddItem}
+            >
+              + Add Item
+            </button>
+          </div>
+        )}
+        </div>
+    )}
 
           <div className="mt-8 bg-white rounded-xl border border-gray-200 p-6 text-center">
             <h3 className="text-xl font-semibold mb-2"> Voice Input</h3>
